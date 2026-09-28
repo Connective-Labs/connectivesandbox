@@ -4,18 +4,19 @@
 // status, and Publish. The builder chat streams through the admin-chat Edge
 // Function; the preview renders a loaded spec exactly as the workspace does.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Building2, Check, ChevronDown, Pencil, Plus, Send, Trash2, Workflow, X } from 'lucide-react'
+import { Building2, Check, ChevronDown, Pencil, Send, Trash2, Workflow, X } from 'lucide-react'
 
 import AppTopBar from '@/components/AppTopBar'
+import { RecipePicker } from '@/components/admin/RecipePicker'
 import WorkspaceBody from '@/components/workspace/WorkspaceBody'
 import { Bubble, DaySeparator, isNewDay } from '@/components/chat/Bubble'
 import { Markdown } from '@/components/chat/Markdown'
 import { TypingBubble } from '@/components/chat/TypingBubble'
 import { useStickToBottom } from '@/components/chat/useStickToBottom'
 import { CollapsibleRail } from '@/components/ui/CollapsibleRail'
-import { Badge, Eyebrow, PrimaryButton } from '@/components/ui/Primitives'
+import { Badge, Eyebrow, GhostButton, PrimaryButton } from '@/components/ui/Primitives'
 import { safeParseWorkflowSpec } from '@/engine/schema'
 import type { WorkflowSpec } from '@/engine/types'
 import {
@@ -222,6 +223,7 @@ export default function Admin() {
   const [messages, setMessages] = useState<BuilderChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [chatPending, setChatPending] = useState(false)
+  const composerRef = useRef<HTMLInputElement>(null)
 
   // Builder chat sticks to the newest message (send, streamed tokens,
   // history load) unless the user deliberately scrolls up.
@@ -241,9 +243,10 @@ export default function Admin() {
   const [renamingClientId, setRenamingClientId] = useState<string | null>(null)
   const [clientRenameValue, setClientRenameValue] = useState('')
   const [confirmingClientId, setConfirmingClientId] = useState<string | null>(null)
-  const [newWorkflowOpen, setNewWorkflowOpen] = useState(false)
-  const [newWorkflowName, setNewWorkflowName] = useState('')
-  const [newWorkflowMode, setNewWorkflowMode] = useState<'blank' | 'duplicate'>('blank')
+  // Guided creation (polish 5): New workflow opens the recipe picker; the
+  // rail starts pinned so the client/workflow lists are visible un-hovered.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [railPinned, setRailPinned] = useState(true)
   const [renamingWorkflowId, setRenamingWorkflowId] = useState<string | null>(null)
   const [workflowRenameValue, setWorkflowRenameValue] = useState('')
   const [confirmingWorkflowId, setConfirmingWorkflowId] = useState<string | null>(null)
@@ -340,6 +343,19 @@ export default function Admin() {
     } catch (error) {
       return { state: 'invalid', error: `Invalid JSON — ${(error as Error).message}` }
     }
+    // Fresh workflows store an empty placeholder spec (empty description,
+    // no components/judges/panels) which cannot pass the schema. Show it as
+    // "no spec" rather than a scary "invalid" while the builder is still
+    // interrogating (polish 5).
+    if (
+      parsed !== null && typeof parsed === 'object' &&
+      (Object.keys(parsed).length === 0 ||
+        ((parsed as { description?: unknown }).description ?? '') === '' &&
+        ((parsed as { intake?: { components?: unknown[] } }).intake?.components?.length ?? 0) === 0 &&
+        ((parsed as { judges?: unknown[] }).judges?.length ?? 0) === 0)
+    ) {
+      return { state: 'empty' }
+    }
     const result = safeParseWorkflowSpec(parsed)
     return result.success
       ? { state: 'valid', spec: result.data }
@@ -377,17 +393,24 @@ export default function Admin() {
 
   // --- Workflow CRUD ---
 
-  const submitNewWorkflow = async () => {
-    const name = newWorkflowName.trim()
-    if (name.length === 0 || selectedClientId === null) return
-    let spec: WorkflowSpec | null = null
-    if (newWorkflowMode === 'duplicate' && selectedWorkflowId !== null) {
-      spec = await getWorkflowSpec(selectedWorkflowId)
+  // Recipe picked: create the workflow, then pre-fill the composer with the
+  // recipe's seed message — the person edits the bracketed specifics, sends.
+  const createFromRecipe = async (name: string, seed: string | null) => {
+    if (selectedClientId === null) return
+    setPickerOpen(false)
+    const workflow = await createWorkflow(selectedClientId, name, null)
+    await reloadWorkflows(selectedClientId, workflow.id)
+    if (seed !== null) {
+      setDraft(seed)
+      composerRef.current?.focus()
     }
-    const workflow = await createWorkflow(selectedClientId, name, spec)
-    setNewWorkflowOpen(false)
-    setNewWorkflowName('')
-    setNewWorkflowMode('blank')
+  }
+
+  const duplicateCurrentWorkflow = async () => {
+    if (selectedClientId === null || selectedWorkflowId === null || selectedWorkflow === null) return
+    setPickerOpen(false)
+    const spec = await getWorkflowSpec(selectedWorkflowId)
+    const workflow = await createWorkflow(selectedClientId, `${selectedWorkflow.name} copy`, spec)
     await reloadWorkflows(selectedClientId, workflow.id)
   }
 
@@ -510,9 +533,13 @@ export default function Admin() {
     <div className="scroll-slim flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-4">
       <div className="flex items-center justify-between gap-2 px-2">
         <Eyebrow>Clients</Eyebrow>
-        <RowButton label="New Client" onClick={() => setNewClientOpen(true)}>
-          <Plus size={16} aria-hidden="true" />
-        </RowButton>
+        <button
+          type="button"
+          onClick={() => setNewClientOpen(true)}
+          className="text-xs font-semibold text-slate-500 transition hover:text-accent"
+        >
+          + New client
+        </button>
       </div>
       {newClientOpen && (
         <div className="mt-2 space-y-1.5 rounded-lg border border-slate-200 bg-white p-2">
@@ -605,40 +632,15 @@ export default function Admin() {
 
       <div className="mt-6 flex items-center justify-between gap-2 px-2">
         <Eyebrow>Workflows</Eyebrow>
-        <RowButton label="New Workflow" onClick={() => setNewWorkflowOpen(true)}>
-          <Plus size={16} aria-hidden="true" />
-        </RowButton>
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          disabled={selectedClientId === null}
+          className="text-xs font-semibold text-slate-500 transition hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          + New workflow
+        </button>
       </div>
-      {newWorkflowOpen && (
-        <div className="mt-2 space-y-1.5 rounded-lg border border-slate-200 bg-white p-2">
-          <InlineInput
-            value={newWorkflowName}
-            onChange={setNewWorkflowName}
-            placeholder="Workflow name"
-            ariaLabel="New workflow name"
-            onSubmit={submitNewWorkflow}
-            onCancel={() => setNewWorkflowOpen(false)}
-          />
-          <div className="flex gap-1" role="group" aria-label="New workflow source">
-            {(['blank', 'duplicate'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setNewWorkflowMode(mode)}
-                aria-pressed={newWorkflowMode === mode}
-                className={cn(
-                  'flex-1 rounded-full px-2 py-1 text-xs font-medium transition-colors',
-                  newWorkflowMode === mode
-                    ? 'bg-accent text-white'
-                    : 'border border-slate-200 text-slate-600 hover:border-accent hover:text-accent',
-                )}
-              >
-                {mode === 'blank' ? 'Blank' : 'Duplicate'}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="mt-3 space-y-1">
         {workflows.map((workflow) =>
           renamingWorkflowId === workflow.id ? (
@@ -701,7 +703,7 @@ export default function Admin() {
           ),
         )}
         {workflows.length === 0 && (
-          <p className="px-3 text-xs text-slate-400">No workflows yet — add one above.</p>
+          <p className="px-3 text-xs text-slate-400">No workflows yet — start one with New workflow.</p>
         )}
       </div>
     </div>
@@ -710,6 +712,34 @@ export default function Admin() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-white">
       <AppTopBar context="Admin" />
+      {/* Action strip (polish 5): the primary admin actions stay visible
+          here at every viewport — never hover-only, never icon-only. */}
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 sm:px-6">
+        <p className="truncate text-xs text-slate-400">
+          {selectedClient !== null
+            ? `${selectedClient.name} · ${selectedWorkflow?.name ?? 'no workflow selected'}`
+            : 'Add a client to start building workflows.'}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <GhostButton
+            onClick={() => {
+              setRailPinned(true)
+              setNewClientOpen(true)
+            }}
+            className="px-3.5 py-1.5 text-xs"
+          >
+            New client
+          </GhostButton>
+          <PrimaryButton
+            onClick={() => setPickerOpen(true)}
+            disabled={selectedClientId === null}
+            title={selectedClientId === null ? 'Add a client first' : undefined}
+            className="px-3.5 py-1.5 text-xs"
+          >
+            New workflow
+          </PrimaryButton>
+        </div>
+      </div>
       <div className="scroll-slim flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* Left column: clients and workflows, collapsible rail on desktop */}
         <div className="shrink-0 border-b border-slate-200 bg-slate-50 lg:hidden">
@@ -718,6 +748,8 @@ export default function Admin() {
         <CollapsibleRail
           width={260}
           label="clients"
+          pinned={railPinned}
+          onPinnedChange={setRailPinned}
           className="hidden border-r border-slate-200 bg-slate-50 lg:block"
           rail={
             <>
@@ -853,6 +885,7 @@ export default function Admin() {
             }}
           >
             <input
+              ref={composerRef}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               placeholder="Describe the workflow…"
@@ -987,6 +1020,15 @@ export default function Admin() {
           </div>
         </aside>
       </div>
+
+      <RecipePicker
+        open={pickerOpen}
+        clientName={selectedClient?.name ?? null}
+        canDuplicate={selectedWorkflow !== null}
+        onClose={() => setPickerOpen(false)}
+        onCreate={(name, seed) => void createFromRecipe(name, seed)}
+        onDuplicate={() => void duplicateCurrentWorkflow()}
+      />
     </div>
   )
 }

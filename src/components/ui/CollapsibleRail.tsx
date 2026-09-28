@@ -21,14 +21,24 @@ export function CollapsibleRail({
   rail,
   children,
   className,
+  pinned: pinnedProp,
+  onPinnedChange,
 }: {
   width: number
   label: string
   rail: ReactNode
   children: ReactNode
   className?: string
+  /** Controlled pin state — pass together with onPinnedChange. */
+  pinned?: boolean
+  onPinnedChange?: (pinned: boolean) => void
 }) {
-  const [pinned, setPinned] = useState(false)
+  const [internalPinned, setInternalPinned] = useState(false)
+  const pinned = pinnedProp ?? internalPinned
+  const setPinned = (value: boolean) => {
+    setInternalPinned(value)
+    onPinnedChange?.(value)
+  }
   const [hovered, setHovered] = useState(false)
   const closeTimer = useRef<number | null>(null)
   const hoveredRef = useRef(false)

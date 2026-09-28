@@ -174,6 +174,30 @@ dependencies beyond the standard scaffold set without a captain decision.
   store (`/home/macbooklee/firstmate/config/connectivesandbox-admin.env`);
   reference it by NAME only, never print it.
 
+## Polish 5 — guided creation & unmissable admin actions
+
+- **Guided workflow creation.** "New workflow" (header strip, always visible,
+  labelled) opens `src/components/admin/RecipePicker.tsx` — one card per named
+  recipe from `docs/modules.md` (Photo triage, Document intake review,
+  Approval desk) plus "Something else" (plain chat). The list is a single
+  typed constant (`RECIPES`); new recipes land there first, then in the
+  modules doc. Picking a recipe creates the workflow and pre-fills the builder
+  composer with a seed message naming the client and the business pattern;
+  bracketed specifics are the only required input. Duplicate-current lives in
+  the picker footer.
+- **Admin CRUD discoverability.** The New client / New workflow actions were
+  icon-only Plus buttons inside a collapsed hover rail — the captain could not
+  find them. Now: a 48px action strip under the top bar carries both actions
+  as labelled buttons at every viewport; the rail starts pinned open (controlled
+  pin state in `CollapsibleRail`); the rail list headers carry labelled
+  "+ New client" / "+ New workflow" text buttons as well. Row-level rename/
+  delete keep their hover reveal + inline confirms from polish 1.
+- **Transcript-ready (design note only).** The `admin-chat` contract must stay
+  machine-callable (stateless message list in, streamed reply out) so a future
+  live transcriber can drive the same builder without UI changes; recipes +
+  the modules catalogue are the constraint layer that makes auto-building
+  safe. Recorded in `docs/modules.md`. No functional change.
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**

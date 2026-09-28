@@ -88,6 +88,17 @@ and offers the closest registered alternative (e.g. capture the address as a
 `text_field`). It never emits a spec containing unregistered components and
 never approximates the feature with a judge or panel.
 
+## Transcript-ready direction (design note, not built)
+
+The long-term goal: a live meeting transcript feeds the builder and workflow
+drafts appear while the conversation is still ongoing. To keep that door
+open, the `admin-chat` Edge Function contract must stay **machine-callable** —
+a stateless message list in, a streamed reply out, no UI-only state. A future
+transcriber can then drive the same builder without UI changes. Recipes and
+this modules catalogue are the constraint layer that makes auto-building safe:
+the model can only compose registered modules, and every spec still validates
+against the frozen Zod schema before it reaches a browser.
+
 ## Validation record
 
 Probed against the deployed function before and after hardening (2026-09-27).
