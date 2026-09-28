@@ -15,6 +15,70 @@ a component; anything outside this catalogue must be added to
 a reviewed PR after the captain approves it. Judges never return free text —
 closed answer sets only.
 
+## Module design principles
+
+Codified from the transcript-mining report
+(`firstmate data store, connectivesandbox-transcript-mining/report.md`) —
+every rule below is backed by real customer-call evidence, not imagination.
+
+### What a module is
+
+A module is a pre-built, pre-branded component with a fixed data contract,
+mounted by name from the JSON spec.
+There are two families: Collectors (intake) and Presenters (dashboard).
+The spec supplies the data — labels, options, thresholds — and the module owns
+rendering and data binding.
+
+### The five tests
+
+Every proposed module must pass all five, not some.
+
+1. **A recurring shape of information.**
+The same structure appears across customers, or it is flagship-critical.
+"Show some text" is not a shape.
+2. **The pipeline can fill it deterministically.**
+You can name the data source: a judge answer, a decisions-ledger row, intake
+state.
+An unnameable data source means it is decoration — reject.
+3. **A sales rep can request it in one sentence.**
+The builder picks it from the catalogue without a paragraph of configuration.
+4. **Its settings fit in a handful of typed fields.**
+Fixed in the frozen type contract.
+Open-ended configuration means it is custom code, not a module.
+5. **Evidence from real calls.**
+Multiple customers demanding it, or flagship-critical.
+
+### The six constraints
+
+1. **New modules are code, never chat.**
+A GitHub PR adds the frozen type entry, the schema update, the component (with
+empty, loading, and populated states), and a test.
+The builder can CALL any module but can never CREATE one.
+2. **Modules can only display what the pipeline produces.**
+External data — WhatsApp, Shopify sync, PDF generation — is a backend phase;
+in demos those modules represent sample data.
+3. **No per-client logic.**
+Client-specificity lives in spec data (options, thresholds, labels), never in
+module behaviour.
+4. **Flat composition.**
+Modules stack as dashboard panels or inline chat cards; no arbitrary nesting,
+no new page layouts.
+Rich needs are several modules, not one mega-module.
+5. **Contracts are migration costs.**
+Design props data-driven from day one — a metrics list, not three hard-coded
+numbers.
+6. **The judge budget.**
+Whatever fills a module arrives as closed, structured answers within the
+per-question token budget; modules stay lean.
+
+### The operational loop
+
+A PR adds the type, the schema entry, the component, and the test.
+Then update this catalogue AND the builder prompt's module menu (migration on
+`agent_instructions`).
+From then on the builder and openjev can call it, and reps can ask for it by
+name.
+
 ## Intake components
 
 | Component | Purpose | Behaviour notes |
