@@ -98,6 +98,8 @@ export function LiveBuild({
   const signatureRef = useRef<string | null>(null)
   const flushSignatureRef = useRef<string | null>(null)
   const flushTimerRef = useRef<number | null>(null)
+  const postStopTimersRef = useRef<number[]>([])
+  const recordingGenerationRef = useRef(0)
   const sendingRef = useRef(false)
   const storedSpecRef = useRef(storedSpec)
   const captionsRef = useRef<HTMLDivElement | null>(null)
@@ -122,6 +124,8 @@ export function LiveBuild({
     flushSignatureRef.current = null
     if (flushTimerRef.current !== null) window.clearTimeout(flushTimerRef.current)
     flushTimerRef.current = null
+    for (const timer of postStopTimersRef.current) window.clearTimeout(timer)
+    postStopTimersRef.current = []
     sessionIdRef.current =
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? `call-${crypto.randomUUID()}`
@@ -178,11 +182,11 @@ export function LiveBuild({
     if (flushTimerRef.current !== null) window.clearTimeout(flushTimerRef.current)
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null
-      void sendTick(true)
+      void sendTick()
     }, FLUSH_DELAY_MS)
   }
 
-  const sendTick = async (force = false) => {
+  const sendTick = async () => {
     if (sendingRef.current) return
     const { clientId: clientIdValue, workflowId: workflowIdValue } = stateRef.current
     if (clientIdValue === null || workflowIdValue === null) return
@@ -191,9 +195,6 @@ export function LiveBuild({
     const flushSignature = flushSignatureRef.current
     const hasWords = pending.length > 0 || tail.length > 0
     if (!hasWords && flushSignature === null) return
-    if (!hasWords && !force && flushSignature !== null) {
-      // Flushes run on their own timer; nothing else to do here.
-    }
     sendingRef.current = true
     setScreening(true)
     try {
@@ -282,6 +283,9 @@ export function LiveBuild({
     if (engineChoice === null || clientId === null || workflowId === null) return
     setNotice(null)
     engineTagRef.current = engineChoice
+    recordingGenerationRef.current += 1
+    for (const timer of postStopTimersRef.current) window.clearTimeout(timer)
+    postStopTimersRef.current = []
     engineRef.current = createEngine(engineChoice, {
       onSegment: handleSegment,
       onError: (message, kind) => {
@@ -302,7 +306,19 @@ export function LiveBuild({
     engineRef.current = null
     tailRef.current = ''
     setRecording(false)
-    void sendTick(true)
+    // Final rolling tick goes through the same screen path. If the ~5s screen
+    // cadence holds it, retry a few times so the call's last words always get
+    // screened (the words stay queued; nothing is dropped).
+    const generation = recordingGenerationRef.current
+    void sendTick()
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      postStopTimersRef.current.push(
+        window.setTimeout(() => {
+          if (recordingGenerationRef.current !== generation) return
+          void sendTick()
+        }, SCREEN_TICK_MS * attempt + 500),
+      )
+    }
   }
 
   // Rolling screen cadence: every ~5s the newest words (and the still-being-
