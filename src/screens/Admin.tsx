@@ -11,6 +11,7 @@ import { Building2, Check, ChevronDown, Pencil, Send, Trash2, Workflow, X } from
 import AppTopBar from '@/components/AppTopBar'
 import { RecipePicker } from '@/components/admin/RecipePicker'
 import { LiveBuild } from '@/components/admin/LiveBuild'
+import { Inbox } from '@/components/admin/Inbox'
 import WorkspaceBody from '@/components/workspace/WorkspaceBody'
 import { Bubble, DaySeparator, isNewDay } from '@/components/chat/Bubble'
 import { Markdown } from '@/components/chat/Markdown'
@@ -27,7 +28,8 @@ import {
   listClients,
   renameClient,
 } from '@/data/adapters/clients'
-import { markDraftPublished, type SpecDraft } from '@/data/adapters/live'
+import { markDraftPublished } from '@/data/adapters/live'
+import { listFeedbackThreads } from '@/data/adapters/feedback'
 import {
   createWorkflow,
   deleteWorkflow,
@@ -237,11 +239,15 @@ export default function Admin() {
   const [tab, setTab] = useState<'preview' | 'json'>('preview')
   const [specSource, setSpecSource] = useState('')
   const [publishedMessage, setPublishedMessage] = useState<string | null>(null)
-  // Centre-column mode: builder chat (primary path) or live transcription
-  // build (secondary ingestion channel — recipes/typing stay the default).
-  const [mode, setMode] = useState<'chat' | 'live'>('chat')
+  // Centre-column mode: builder chat (primary path), live transcription
+  // build, or the feedback Inbox (rep-side service threads + AI proposals).
+  const [mode, setMode] = useState<'chat' | 'live' | 'inbox'>('chat')
   const [storedSpec, setStoredSpec] = useState<WorkflowSpec | null>(null)
-  const [activeDraft, setActiveDraft] = useState<SpecDraft | null>(null)
+  // A draft awaiting the rep's Publish (transcript or feedback source); only
+  // its id is needed to flag it published after the publish path succeeds.
+  const [activeDraft, setActiveDraft] = useState<{ id: string } | null>(null)
+  // Quiet unread badge for the Inbox tab (no popups — ever).
+  const [unreadFeedback, setUnreadFeedback] = useState(0)
 
   // CRUD chrome: one open piece at a time per list.
   const [newClientOpen, setNewClientOpen] = useState(false)
@@ -264,6 +270,29 @@ export default function Admin() {
     void reloadClients(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Quiet unread polling for the Inbox tab; the Inbox itself re-fetches on
+  // its own cadence — this only keeps the tab badge honest.
+  useEffect(() => {
+    let active = true
+    const poll = () => {
+      void listFeedbackThreads().then((threads) => {
+        if (active) setUnreadFeedback(threads.reduce((sum, thread) => sum + thread.unread, 0))
+      })
+    }
+    poll()
+    const timer = window.setInterval(poll, 30000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  /** Point the rail at a client+workflow (Inbox Test/Publish targeting). */
+  const selectClientWorkflow = (clientId: string, workflowId: string) => {
+    setSelectedClientId(clientId)
+    setSelectedWorkflowId(workflowId)
+  }
 
   async function reloadClients(selectId: string | null) {
     const rows = await listClients()
@@ -792,7 +821,7 @@ export default function Admin() {
         <main className="flex min-h-[420px] min-w-0 flex-1 flex-col lg:min-h-0">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-2.5">
             <div className="flex shrink-0 gap-1 rounded-full border border-slate-200 bg-white p-0.5">
-              {(['chat', 'live'] as const).map((entry) => (
+              {(['chat', 'live', 'inbox'] as const).map((entry) => (
                 <button
                   key={entry}
                   type="button"
@@ -803,7 +832,12 @@ export default function Admin() {
                     mode === entry ? 'bg-accent text-white shadow-sm' : 'text-slate-500 hover:text-ink',
                   )}
                 >
-                  {entry === 'chat' ? 'Builder' : 'Live build'}
+                  {entry === 'chat' ? 'Builder' : entry === 'live' ? 'Live build' : 'Inbox'}
+                  {entry === 'inbox' && unreadFeedback > 0 && mode !== 'inbox' && (
+                    <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
+                      {unreadFeedback}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -945,13 +979,22 @@ export default function Admin() {
             GLM 5.3 Flash
           </p>
               </>
-          ) : (
+          ) : mode === 'live' ? (
             <LiveBuild
               clientId={selectedClientId}
               workflowId={selectedWorkflowId}
               storedSpec={storedSpec}
               onLoadSpec={loadSpecIntoPreview}
               onActiveDraftChange={setActiveDraft}
+            />
+          ) : (
+            <Inbox
+              initialClientId={selectedClientId}
+              onLoadSpec={(spec) => {
+                loadSpecIntoPreview(spec)
+              }}
+              onActiveDraftChange={setActiveDraft}
+              onSelectWorkflow={selectClientWorkflow}
             />
           )}
         </main>
