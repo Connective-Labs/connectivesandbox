@@ -245,6 +245,49 @@ dependencies beyond the standard scaffold set without a captain decision.
   grep + build; a dev-browser pass on LiveBuild remains worthwhile for the
   captain.
 
+## Feedback channel (Phase 9 — dual-output client service chat)
+
+- **Surface.** Client workspace gets a Workflow | Feedback toggle; Feedback is
+  a WhatsApp-style thread (`FeedbackChat`) with attachments via the existing
+  artifact flow. Admin gets an Inbox mode (third centre tab, unread badge on
+  the tab, polled quietly — no popups): thread list left, conversation right,
+  proposed-draft cards with Test (loads the draft into the existing preview
+  sandbox)/Publish/Discard, plus a per-client change log of published
+  feedback drafts. Rep replies are stored as `feedback_messages`
+  direction='rep'.
+- **Planner adapter (recorded decision).** The parallel-AI edit pipeline sits
+  behind `SpecPlanner` in `supabase/functions/_shared/planner.ts`:
+  `plan({feedback, classification, currentSpec}) → PlannerProposal`
+  ({strings, componentOps, thresholdTweaks, summary}). v1 = GLM-5.3-Flash
+  (plain fetch, `reasoningEffort: 'low'`); a Claude/other planner slots in by
+  adding a branch to `resolvePlanner()` (`PLANNER_ADAPTER` env: 'glm' default,
+  'none' disables) with zero caller/UI changes. The proposal is applied
+  DETERMINISTICALLY by `applyProposal` (whitelisted string slots computed
+  from the current spec, catalogue-only component add/remove, thresholds
+  clamped to ±0.1 / review ≥ 0.5 / auto ≤ 0.95 / review < auto) and the
+  frozen Zod schema remains the hard gate (deterministic-strings retry).
+- **Classification.** `feedback` Edge Function stores the message first, then
+  ONE batched openjev call → closed set wording | structure | accuracy |
+  feature_request | bug | question (+ accuracy_target judge when
+  identifiable, stored as `referenced_judge`). Failure → 'question' +
+  `classification_fallback` — the message is never lost. accuracy rows are
+  evaluation data, never auto-fixable (the planner may propose only a bounded
+  threshold tweak in the draft for rep review).
+- **Rate guard.** Planner invocations bounded per client per hour
+  (`FEEDBACK_PLANNER_MAX_PER_HOUR`, default 5), counted durably from
+  `feedback_messages` (classification in wording/structure in the last hour)
+  so it survives isolate recycling; suppressed messages are stored +
+  classified, only the draft spend is held back.
+- **Durability.** `feedback_messages` (migration 20260929000000) follows the
+  gateway pattern: RLS enabled, NO policies (default deny) — client JWTs see
+  zero rows directly; the `feedback` function scopes every read by the
+  verified cookie with service_role inside. `spec_drafts` gained
+  `feedback_message_id`; drafts use source='feedback' and reuse the live-draft
+  publish/flag path. Isolation test extended (A, B, claimless JWT all read
+  zero feedback rows); `supabase/tests/feedback-e2e.sh` drives the labelled
+  classification set (reports accuracy), draft/no-draft split, rate guard,
+  inbox flow, publish/discard, and cross-client gateway isolation.
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**

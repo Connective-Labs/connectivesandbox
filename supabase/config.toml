@@ -452,3 +452,12 @@ verify_jwt = false
 [functions.live-draft]
 verify_jwt = false
 import_map = "./functions/import_map.json"
+
+# Feedback channel: stores client↔rep service threads, classifies every
+# client message with openjev (closed set), and runs wording/structure
+# feedback through the planner adapter into spec_drafts (source='feedback').
+# Validates assembled specs against the frozen Zod schema — shares the
+# admin-chat import map.
+[functions.feedback]
+verify_jwt = false
+import_map = "./functions/import_map.json"

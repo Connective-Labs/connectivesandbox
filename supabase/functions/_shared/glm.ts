@@ -36,6 +36,8 @@ export interface GlmMessage {
 export interface GlmRequestOptions {
   stream?: boolean
   maxTokens?: number
+  /** Per-call effort override (default stays the GLM_REASONING_EFFORT secret). */
+  reasoningEffort?: 'low' | 'high' | 'max'
 }
 
 function glmApiKey(): string {
@@ -48,7 +50,8 @@ function glmModel(): string {
   return Deno.env.get('GLM_MODEL') ?? DEFAULT_MODEL
 }
 
-function glmReasoningEffort(): 'low' | 'high' | 'max' {
+function glmReasoningEffort(override?: 'low' | 'high' | 'max'): 'low' | 'high' | 'max' {
+  if (override !== undefined) return override
   const value = Deno.env.get('GLM_REASONING_EFFORT')
   return value === 'low' || value === 'max' ? value : 'high'
 }
@@ -60,7 +63,7 @@ function requestBody(messages: GlmMessage[], options: GlmRequestOptions): Record
     temperature: 1,
     top_p: 0.95,
     thinking: { type: 'enabled' },
-    reasoning_effort: glmReasoningEffort(),
+    reasoning_effort: glmReasoningEffort(options.reasoningEffort),
     stream: options.stream ?? false,
     // GLM-5.3-flash with reasoning_effort 'max' can spend thousands of
     // tokens thinking; keep the output budget generous so content survives.
