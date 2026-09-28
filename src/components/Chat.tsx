@@ -253,10 +253,20 @@ export default function Chat({ component }: { component: ChatComponent | null })
       if (attachment.source === undefined) {
         plainFiles.push(attachment.file)
       } else {
-        const sourceId = attachment.source
-        const bucket = filesBySlot[sourceId] ?? []
+        const sourceId: string = attachment.source
+        // Card-sourced files land in their component's judge-state slot: for
+        // photo_slot that is the spec's `key` (what judges read), for every
+        // other component the component id.
+        const sourceComponent = spec.intake.components.find(
+          (entry) => entry.id === sourceId,
+        )
+        const slotId =
+          sourceComponent !== undefined && 'key' in sourceComponent
+            ? sourceComponent.key
+            : sourceId
+        const bucket = filesBySlot[slotId] ?? []
         bucket.push(attachment.file)
-        filesBySlot[sourceId] = bucket
+        filesBySlot[slotId] = bucket
         setSubmittedCards((previous) => ({
           ...previous,
           [sourceId]: `${tray.length} ${tray.length === 1 ? 'file' : 'files'} attached`,
