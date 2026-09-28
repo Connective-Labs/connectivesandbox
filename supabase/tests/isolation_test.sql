@@ -81,6 +81,14 @@ values
 insert into public.auth_attempts (code_hash, ip, success)
 values ('isolation-test-hash', '127.0.0.1', false);
 
+-- Feedback channel (gateway pattern): service threads for both tenants.
+insert into public.feedback_messages (id, client_id, direction, body, classification, confidence, read_by_rep, read_by_client)
+values
+  ('aaaaaaaa-0000-0000-0000-00000000f001', '11111111-1111-1111-1111-111111111111', 'client',
+   'tenant A feedback — the label reads wrong', 'wording', 0.9, false, true),
+  ('bbbbbbbb-0000-0000-0000-00000000f001', '22222222-2222-2222-2222-222222222222', 'client',
+   'tenant B feedback — please add a step', 'structure', 0.8, false, true);
+
 -- Storage metadata rows mirroring the {client_id}/{session_id}/{artifact_id}-{filename}
 -- path convention (no bytes uploaded; the RLS policies on storage.objects are
 -- what we are testing). Everything after this savepoint that touches
@@ -179,6 +187,13 @@ begin
 
   select count(*) into n from public.spec_drafts;
   if n <> 0 then raise exception 'LEAK: A read spec_drafts (% rows)', n; end if;
+
+  -- Feedback channel (gateway pattern): NO client-facing policies at all —
+  -- even the OWNING client reads zero rows directly. A client "sees own
+  -- threads" only through the `feedback` Edge Function, which scopes every
+  -- read by the verified session cookie with service_role inside.
+  select count(*) into n from public.feedback_messages;
+  if n <> 0 then raise exception 'LEAK: A read feedback_messages (% rows)', n; end if;
 
   begin
     insert into public.transcript_segments (client_id, session_id, segment_index, text)
@@ -287,6 +302,9 @@ begin
   select count(*) into n from public.spec_drafts;
   if n <> 0 then raise exception 'LEAK: B read spec_drafts (% rows)', n; end if;
 
+  select count(*) into n from public.feedback_messages;
+  if n <> 0 then raise exception 'LEAK: B read feedback_messages (% rows)', n; end if;
+
   begin
     insert into public.spec_drafts (client_id, version, spec, delta_summary)
     values ('22222222-2222-2222-2222-222222222222', 1, '{}'::jsonb, 'intrusion');
@@ -352,6 +370,9 @@ begin
 
   select count(*) into n from public.spec_drafts;
   if n <> 0 then raise exception 'LEAK: claimless JWT read spec_drafts (% rows)', n; end if;
+
+  select count(*) into n from public.feedback_messages;
+  if n <> 0 then raise exception 'LEAK: claimless JWT read feedback_messages (% rows)', n; end if;
 end $$;
 
 rollback to savepoint claimless;
@@ -367,6 +388,7 @@ delete from public.sessions  where client_id in ('11111111-1111-1111-1111-111111
 delete from public.workflows where client_id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
 delete from public.clients   where id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
 delete from public.auth_attempts where code_hash = 'isolation-test-hash';
+delete from public.feedback_messages where client_id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
 
 do $$
 declare
@@ -377,6 +399,6 @@ begin
   if n <> 0 then raise exception 'CLEANUP FAIL: isolation fixture clients still present'; end if;
 end $$;
 
-select 'ISOLATION TEST: PASS — no cross-tenant leaks across workflows, sessions, messages, artifacts, decisions, clients, agent_instructions, auth_attempts, transcript_segments, spec_drafts, storage' as result;
+select 'ISOLATION TEST: PASS — no cross-tenant leaks across workflows, sessions, messages, artifacts, decisions, clients, agent_instructions, auth_attempts, transcript_segments, spec_drafts, feedback_messages, storage' as result;
 
 commit;
