@@ -1,7 +1,9 @@
 // Live transcription pipeline adapter (browser-side). All calls ride the
-// `live-draft` Edge Function gateway (admin JWT cookie, same-origin). The
-// browser never touches PostgREST and never sees screening/drafting
-// credentials — segments are text only, no audio ever leaves the client.
+// same-origin gateway (admin JWT cookie): `/live-facts` is the fact-ledger
+// brain (two-stage jev screen → keyed fact extraction → compiled drafts);
+// `/live-draft` keeps the draft-rail operations. The browser never touches
+// PostgREST and never sees screening/drafting credentials — segments and
+// facts are text only, no audio ever leaves the client.
 
 import type { WorkflowSpec } from '@/engine/types'
 import { assertOk, callFunction, type FunctionResponse } from '@/data/api'
@@ -25,37 +27,102 @@ export interface LiveDraftSegment {
   text: string
 }
 
-export interface ScreenAndDraftResult {
-  changed: boolean
+// ---------------------------------------------------------------------------
+// Fact ledger (livebuild v2)
+// ---------------------------------------------------------------------------
+
+export type FactOp = 'add' | 'update' | 'confirm' | 'remove'
+export type FactArea = 'intake' | 'judges' | 'dashboard'
+
+/** One replayed ledger entry (the state view returned by /live-facts). */
+export interface FactLedgerEntryView {
+  key: string
+  op: FactOp
+  area: FactArea
+  active: boolean
+  detail: { strings?: Record<string, string>; meta?: Record<string, unknown> }
+  ops: number
+}
+
+export interface LiveFactAppend {
+  key: string
+  op: FactOp
+  area: FactArea
+}
+
+export interface LiveFactsDraft {
+  id: string | null
+  version: number
+  spec: WorkflowSpec
   delta_summary: string
-  screen_choice?: string
+}
+
+export interface LiveFactsResult {
+  /** The ledger signature changed (facts appended or a flush compile ran). */
+  changed: boolean
+  screen?: 'material_change' | 'no_change'
   screen_confidence?: number
-  draft_spec?: WorkflowSpec
-  draft_version?: number
-  draft_id?: string | null
-  /** A change was detected but the rate guard held the draft back. */
+  /** Stage-1 held back by the ~5s screen cadence — resend the same words. */
+  screen_suppressed?: boolean
+  /** Stage-2 held back by the ~8s extraction cadence — resend the segments. */
+  facts_suppressed?: boolean
+  appended?: LiveFactAppend[]
+  ledger?: FactLedgerEntryView[]
+  signature?: string
+  fact_cap_reached?: boolean
+  draft?: LiveFactsDraft
   draft_suppressed?: boolean
-  /** The regenerated spec failed schema validation even after self-correction. */
-  draft_error?: string
   error?: string
 }
 
-/** Send newly transcribed segments for screening + (maybe) draft generation. */
-export async function screenAndDraft(payload: {
+export interface SendLiveFactsPayload {
   client_id: string
   workflow_id: string | null
   session_id: string
-  transcript_digest: string
-  new_segments: LiveDraftSegment[]
-  current_spec: WorkflowSpec | null
-}): Promise<ScreenAndDraftResult> {
-  const response = await callFunction<ScreenAndDraftResult>('/live-draft', {
+  recipe_id?: string
+  /** Final segments since the last post. */
+  new_segments?: LiveDraftSegment[]
+  /** Interim words still being spoken (rolling tail; never persisted). */
+  rolling_tail?: string
+  /** Rolling digest of the call so far (oldest → newest, capped client-side). */
+  transcript_digest?: string
+  /** Flush mode: compile the current ledger when it drifted from this
+   *  signature (no jev spend; the ~10s draft floor holds). */
+  compile_signature?: string
+}
+
+/** Send new transcript words through the fact-ledger pipeline. */
+export async function sendLiveFacts(payload: SendLiveFactsPayload): Promise<LiveFactsResult> {
+  const response = await callFunction<LiveFactsResult>('/live-facts', {
     method: 'POST',
     body: payload,
   })
   assertOk(response as unknown as FunctionResponse<{ error?: string }>)
   return response.data
 }
+
+/** Replayed ledger state for a session (client reload). */
+export async function fetchLiveLedger(
+  clientId: string,
+  sessionId: string,
+  recipeId?: string,
+): Promise<{ ledger: FactLedgerEntryView[]; signature: string; fact_count: number }> {
+  const params = new URLSearchParams({ client_id: clientId, session_id: sessionId })
+  if (recipeId !== undefined) params.set('recipe_id', recipeId)
+  const response = await callFunction<{ ledger?: FactLedgerEntryView[]; signature?: string; fact_count?: number; error?: string }>(
+    `/live-facts?${params.toString()}`,
+  )
+  assertOk(response as unknown as FunctionResponse<{ error?: string }>)
+  return {
+    ledger: response.data.ledger ?? [],
+    signature: response.data.signature ?? '',
+    fact_count: response.data.fact_count ?? 0,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Draft rail (/live-draft)
+// ---------------------------------------------------------------------------
 
 /** Draft rail for a workflow, newest version first. */
 export async function listSpecDrafts(workflowId: string): Promise<SpecDraft[]> {

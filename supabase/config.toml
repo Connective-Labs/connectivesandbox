@@ -461,3 +461,18 @@ import_map = "./functions/import_map.json"
 [functions.feedback]
 verify_jwt = false
 import_map = "./functions/import_map.json"
+
+# Livebuild v2: the fact-ledger brain. Two-stage openjev (material screen,
+# then keyed fact extraction); GLM fills strings for newly created elements
+# only; drafts are compiled deterministically (src/engine/compilers.ts) and
+# validated against the frozen Zod schema — shares the admin-chat import map.
+[functions.live-facts]
+verify_jwt = false
+import_map = "./functions/import_map.json"
+
+# Livebuild v2: server STT engine (Deepgram batch-chunked). MediaRecorder
+# chunks arrive as raw audio bytes; only text returns. Gated on the
+# DEEPGRAM_API_KEY secret (503 + reason:'secret_pending' when absent — the
+# client falls back to the Web Speech engine). No audio is ever stored.
+[functions.live-transcribe]
+verify_jwt = false

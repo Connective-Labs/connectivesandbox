@@ -59,6 +59,38 @@ export function assertOk(response: FunctionResponse<{ error?: string }>): void {
   }
 }
 
+/** POST raw binary bytes to an Edge Function (server STT audio chunks).
+ *  Same-origin + credentials so the session cookie rides along. Returns the
+ *  parsed JSON body, or throws ApiError with the server's error message. */
+export async function postBinary<T = Record<string, unknown>>(
+  path: string,
+  body: Blob,
+  headers: Record<string, string> = {},
+): Promise<T> {
+  const finalHeaders: Record<string, string> = { ...headers }
+  if (ANON_KEY.length > 0) finalHeaders.apikey = ANON_KEY
+  const response = await fetch(`${FUNCTIONS_BASE}${path}`, {
+    method: 'POST',
+    headers: finalHeaders,
+    credentials: 'include',
+    body,
+  })
+  const text = await response.text()
+  let data: unknown = {}
+  if (text.length > 0) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = {}
+    }
+  }
+  if (!response.ok) {
+    const message = (data as { error?: string }).error ?? `Request failed (${response.status})`
+    throw new ApiError(message, response.status)
+  }
+  return data as T
+}
+
 export interface StreamResult {
   /** Final metadata event (the {done:true} payload), when it arrived. */
   done: Record<string, unknown> | null

@@ -82,22 +82,22 @@ function isNonEmpty(value: unknown): value is string {
  *  base lacks them. Existing strings are never overwritten by empties, so
  *  cached copy is stable and regeneration is idempotent. */
 function mergeDetail(base: FactDetail, incoming: FactDetail): FactDetail {
-  const strings: FactStrings = { ...(base.strings ?? {}) }
+  const strings: FactStrings = { ...base.strings }
   for (const [slot, value] of Object.entries(incoming.strings ?? {})) {
     if (isNonEmpty(value) && !isNonEmpty(strings[slot as keyof FactStrings])) {
       strings[slot as keyof FactStrings] = value
     }
   }
-  const meta: FactMeta = { ...(base.meta ?? {}) }
+  const meta: FactMeta = { ...base.meta }
   for (const [slot, value] of Object.entries(incoming.meta ?? {})) {
     if (value !== undefined && meta[slot as keyof FactMeta] === undefined) {
       meta[slot as keyof FactMeta] = value as never
     }
   }
-  return {
-    ...(Object.keys(strings).length > 0 ? { strings } : {}),
-    ...(Object.keys(meta).length > 0 ? { meta } : {}),
-  }
+  const detail: FactDetail = {}
+  if (Object.keys(strings).length > 0) detail.strings = strings
+  if (Object.keys(meta).length > 0) detail.meta = meta
+  return detail
 }
 
 function cloneEntry(entry: FactStateEntry): FactStateEntry {
