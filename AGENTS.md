@@ -23,7 +23,11 @@ dependencies beyond the standard scaffold set without a captain decision.
    call Supabase directly. Adapters hit the real backend exclusively — the
    Phase 1–3 fixtures were deleted in Phase 7 and nothing imports them.
 4. **`src/engine/types.ts` is FROZEN.** Written verbatim in phase 1; never
-   edit it in any later phase.
+   edit it in any later phase. Sole captain-approved exception (module waves
+   1+2, 2026-09-30): `photo_slot` + `follow_up_card` joined the intake union;
+   `triage_verdict`, `quote_panel`, `escalation_card`, `thread_preview`,
+   `status_queue`, `alert_feed`, `kpi_tiles`, `pipeline_tracker` joined the
+   dashboard union. No further edits without a captain decision.
 5. **No secret, model key, or `service_role` key ever reaches the browser.**
 6. **A judge never returns free text.** `JudgeAnswer.value` is
    `string | boolean | number` and, for choice judges, must be one of the

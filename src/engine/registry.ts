@@ -56,6 +56,8 @@ export const intakeRegistry: IntakeRegistry = {
   button_group: lazyIntake(() => import('@/components/ButtonGroup')),
   text_field: lazyIntake(() => import('@/components/TextField')),
   form: lazyIntake(() => import('@/components/Form')),
+  photo_slot: lazyIntake(() => import('@/components/PhotoSlot')),
+  follow_up_card: lazyIntake(() => import('@/components/FollowUpCard')),
 }
 
 export const dashboardRegistry: DashboardRegistry = {
@@ -64,6 +66,14 @@ export const dashboardRegistry: DashboardRegistry = {
   monitoring: lazyPanel(() => import('@/components/Monitoring')),
   decision_log: lazyPanel(() => import('@/components/DecisionLog')),
   usage_counter: lazyPanel(() => import('@/components/UsageCounter')),
+  triage_verdict: lazyPanel(() => import('@/components/TriageVerdict')),
+  quote_panel: lazyPanel(() => import('@/components/QuotePanel')),
+  escalation_card: lazyPanel(() => import('@/components/EscalationCard')),
+  thread_preview: lazyPanel(() => import('@/components/ThreadPreview')),
+  status_queue: lazyPanel(() => import('@/components/StatusQueue')),
+  alert_feed: lazyPanel(() => import('@/components/AlertFeed')),
+  kpi_tiles: lazyPanel(() => import('@/components/KpiTiles')),
+  pipeline_tracker: lazyPanel(() => import('@/components/PipelineTracker')),
 }
 
 /** Every intake type string the registry knows about. */
