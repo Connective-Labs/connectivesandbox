@@ -445,3 +445,10 @@ verify_jwt = false
 
 [functions.artifact-api]
 verify_jwt = false
+
+# Live transcription pipeline: screens transcript segments with openjev and
+# drafts WorkflowSpecs with GLM-5.3-Flash; validates against the frozen Zod
+# schema server-side, so it shares the admin-chat import map.
+[functions.live-draft]
+verify_jwt = false
+import_map = "./functions/import_map.json"
