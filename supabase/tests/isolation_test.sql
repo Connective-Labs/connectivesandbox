@@ -171,6 +171,31 @@ begin
   select count(*) into n from public.auth_attempts;
   if n <> 0 then raise exception 'LEAK: A read auth_attempts (% rows)', n; end if;
 
+  -- Live transcribe tables (gateway pattern): NO client-facing policies at
+  -- all, so even the OWNING client sees zero rows — service_role inside
+  -- `live-draft` is the only access path.
+  select count(*) into n from public.transcript_segments;
+  if n <> 0 then raise exception 'LEAK: A read transcript_segments (% rows)', n; end if;
+
+  select count(*) into n from public.spec_drafts;
+  if n <> 0 then raise exception 'LEAK: A read spec_drafts (% rows)', n; end if;
+
+  begin
+    insert into public.transcript_segments (client_id, session_id, segment_index, text)
+    values ('11111111-1111-1111-1111-111111111111', 'isolation-test-call', 0, 'intrusion');
+    raise exception 'LEAK: A inserted a transcript_segment';
+  exception
+    when insufficient_privilege then null; -- correctly rejected by RLS
+  end;
+
+  begin
+    insert into public.spec_drafts (client_id, version, spec, delta_summary)
+    values ('11111111-1111-1111-1111-111111111111', 1, '{}'::jsonb, 'intrusion');
+    raise exception 'LEAK: A inserted a spec_draft';
+  exception
+    when insufficient_privilege then null; -- correctly rejected by RLS
+  end;
+
   -- 4. Cross-tenant WRITE attempt must be rejected by WITH CHECK.
   begin
     insert into public.messages (session_id, role, content)
@@ -256,6 +281,20 @@ begin
   select count(*) into n from public.auth_attempts;
   if n <> 0 then raise exception 'LEAK: B read auth_attempts (% rows)', n; end if;
 
+  select count(*) into n from public.transcript_segments;
+  if n <> 0 then raise exception 'LEAK: B read transcript_segments (% rows)', n; end if;
+
+  select count(*) into n from public.spec_drafts;
+  if n <> 0 then raise exception 'LEAK: B read spec_drafts (% rows)', n; end if;
+
+  begin
+    insert into public.spec_drafts (client_id, version, spec, delta_summary)
+    values ('22222222-2222-2222-2222-222222222222', 1, '{}'::jsonb, 'intrusion');
+    raise exception 'LEAK: B inserted a spec_draft';
+  exception
+    when insufficient_privilege then null;
+  end;
+
   begin
     insert into public.messages (session_id, role, content)
     values ('aaaaaaaa-0000-0000-0000-00000000a001', 'user', 'cross-tenant intrusion');
@@ -307,6 +346,12 @@ begin
 
   select count(*) into n from public.auth_attempts;
   if n <> 0 then raise exception 'LEAK: claimless JWT read auth_attempts (% rows)', n; end if;
+
+  select count(*) into n from public.transcript_segments;
+  if n <> 0 then raise exception 'LEAK: claimless JWT read transcript_segments (% rows)', n; end if;
+
+  select count(*) into n from public.spec_drafts;
+  if n <> 0 then raise exception 'LEAK: claimless JWT read spec_drafts (% rows)', n; end if;
 end $$;
 
 rollback to savepoint claimless;
@@ -332,6 +377,6 @@ begin
   if n <> 0 then raise exception 'CLEANUP FAIL: isolation fixture clients still present'; end if;
 end $$;
 
-select 'ISOLATION TEST: PASS — no cross-tenant leaks across workflows, sessions, messages, artifacts, decisions, clients, agent_instructions, auth_attempts, storage' as result;
+select 'ISOLATION TEST: PASS — no cross-tenant leaks across workflows, sessions, messages, artifacts, decisions, clients, agent_instructions, auth_attempts, transcript_segments, spec_drafts, storage' as result;
 
 commit;

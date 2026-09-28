@@ -198,6 +198,53 @@ dependencies beyond the standard scaffold set without a captain decision.
   the modules catalogue are the constraint layer that makes auto-building
   safe. Recorded in `docs/modules.md`. No functional change.
 
+## Live transcription pipeline (Phase 8 — live build while the rep talks)
+
+- **STT adapter decision.** v1 engine is the browser's Web Speech API
+  (`webkitSpeechRecognition`, Chrome-only) behind a small `TranscriptionEngine`
+  interface (`start/stop` + `onSegment` handlers) in
+  `src/data/adapters/transcribe.ts` — no package, degraded gracefully with
+  "Live transcription needs Chrome." A streaming server engine (Deepgram/
+  Whisper) slots in later by implementing the same interface; the UI never
+  talks to the browser API directly. Interim results feed live captions only;
+  final text segments are the sole durable artefact. **No audio ever leaves
+  the browser.**
+- **jev/GLM hybrid (captain decision, supersedes full-GLM regeneration).** In
+  `live-draft`, openjev drives STRUCTURE via ONE batched closed-choice call:
+  materiality (the change trigger) plus per-class intake ops
+  (add/keep/remove), the decision set (catalogue choices), and a scalar
+  quality-judge flag. The spec skeleton is assembled deterministically from
+  legal catalogue parts (`DECISION_SETS`, component ids, thresholds in the
+  function); GLM-5.3-Flash fills STRING SLOTS ONLY (labels, hints, question
+  wording) against an id-keyed slot whitelist — it can never add, remove,
+  reorder, or re-key anything. Zod validation remains the hard gate with a
+  deterministic-strings retry; by construction it nearly always passes.
+- **Durability + RLS choice.** `transcript_segments` and `spec_drafts`
+  (migrations 20260928000000/1) follow the Phase 5 gateway pattern: RLS
+  enabled, NO policies (default deny) — like `clients`/`agent_instructions`,
+  they are reachable ONLY via service_role inside Edge Functions, so even a
+  valid client JWT sees zero rows (isolation test extended + passing).
+  Publishing a draft rides the existing publish path (PUT spec, version bump);
+  the draft row is then flagged via live-draft PATCH.
+- **Rate guard / draft floor.** At most one draft per
+  `DRAFT_COOLDOWN_SECONDS` (default 15) per (client_id, session_id), enforced
+  in `live-draft` from `spec_drafts` so it survives isolate recycling; the
+  client additionally debounces 4s after the last final segment. A suppressed
+  draft returns `draft_suppressed: true` instead of spending GLM tokens.
+- **UI.** Centre column of the admin screen is tabbed: Builder (chat,
+  primary path — typing/recipes stay the default) and Live build
+  (`src/components/admin/LiveBuild.tsx`, secondary channel): record control
+  with pulsing dot + elapsed, monospace rolling captions, numbered draft rail
+  (newest auto-loads into the existing preview; click to reload; one-click
+  discard with confirm). Publish stays the right-column action on the
+  previewed spec — the rep is the UAT gate.
+- **Verification.** `supabase/tests/live-transcribe-e2e.sh` drives the whole
+  pipeline headless (synthetic discovery call → screened beats → versioned
+  drafts → rate guard → publish → client sees the spec). Chrome CDN is
+  blocked in the build sandbox, so browser-level verification was by bundle
+  grep + build; a dev-browser pass on LiveBuild remains worthwhile for the
+  captain.
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**
