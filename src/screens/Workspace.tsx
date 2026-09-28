@@ -6,10 +6,11 @@
 // and judge results are shared.
 
 import { useEffect, useState } from 'react'
-import { Layers } from 'lucide-react'
+import { Layers, MessageSquare } from 'lucide-react'
 
 import AppTopBar from '@/components/AppTopBar'
 import WorkspaceBody from '@/components/workspace/WorkspaceBody'
+import { FeedbackChat } from '@/components/workspace/FeedbackChat'
 import { CollapsibleRail } from '@/components/ui/CollapsibleRail'
 import { Eyebrow } from '@/components/ui/Primitives'
 import { getWorkflowSpec, listWorkflows } from '@/data/adapters/workflows'
@@ -22,6 +23,9 @@ export default function Workspace() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [spec, setSpec] = useState<WorkflowSpec | null>(null)
+  // Centre surface: the provisioned workflow (default) or the feedback
+  // channel (service-team thread).
+  const [surface, setSurface] = useState<'workflow' | 'feedback'>('workflow')
 
   useEffect(() => {
     let active = true
@@ -135,7 +139,39 @@ export default function Workspace() {
             </div>
           )}
 
-          {spec !== null && selectedId !== null ? (
+          {/* Surface toggle: workflow (default) or the feedback channel. */}
+          <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-4 py-2">
+            <div className="flex gap-1 rounded-full border border-slate-200 bg-white p-0.5">
+              {(['workflow', 'feedback'] as const).map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  onClick={() => setSurface(entry)}
+                  aria-pressed={surface === entry}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-full px-3.5 py-1 text-xs font-semibold transition-colors',
+                    surface === entry ? 'bg-accent text-white shadow-sm' : 'text-slate-500 hover:text-ink',
+                  )}
+                >
+                  {entry === 'workflow' ? (
+                    <>
+                      <Layers size={13} aria-hidden="true" /> Workflow
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare size={13} aria-hidden="true" /> Feedback
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {surface === 'feedback' ? (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <FeedbackChat workflowId={selectedId} />
+            </div>
+          ) : spec !== null && selectedId !== null ? (
             <WorkspaceProvider key={spec.name} workflowId={selectedId} spec={spec} mode="live">
               <WorkspaceBody />
             </WorkspaceProvider>

@@ -19,6 +19,17 @@ export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-SG', { hour12: false })
 }
 
+/** '9 Apr, 14:32' — change-log and draft timestamps. */
+export function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-SG', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
