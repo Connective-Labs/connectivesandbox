@@ -185,6 +185,9 @@ dependencies beyond the standard scaffold set without a captain decision.
   composer with a seed message naming the client and the business pattern;
   bracketed specifics are the only required input. Duplicate-current lives in
   the picker footer.
+- **Module design principles** (what qualifies a module: the five tests, six
+  constraints, operational loop) are codified in `docs/modules.md`; visual
+  mockups of the proposed Wave 1/Wave 2 modules live in `docs/module-mockups.html`.
 - **Admin CRUD discoverability.** The New client / New workflow actions were
   icon-only Plus buttons inside a collapsed hover rail — the captain could not
   find them. Now: a 48px action strip under the top bar carries both actions
