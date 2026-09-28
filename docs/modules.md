@@ -88,6 +88,8 @@ name.
 | `button_group` | One-tap closed choice | `options` (value/label, ≥1), `multi` for multi-select. Inline card submissions are chat sends. |
 | `text_field` | Short or multiline typed input | `multiline: true` turns it into a textarea. |
 | `form` | Structured multi-field record | Fields: `text` \| `textarea` \| `select` (select requires `options`); `required` optional per field. |
+| `photo_slot` | Keyed per-item photo capture (module wave 1) | `label`, `capture_hint` (e.g. "include the rail in frame"), `accept` MIME list, `key` — the judge-state key picked files land under. Camera-capable picker; thumbnail grid after pick. |
+| `follow_up_card` | Pre-authored clarification picker (module wave 1) | ONE question + choice chips (`options`, ≥1) + optional short text (`allow_text`) + send. Submission is a chat send; collapses to a sent chip. |
 
 ## Dashboard panels
 
@@ -98,6 +100,14 @@ name.
 | `monitoring` | Ops metric tiles | `metrics` list; unknown metric names fall back to the decision count. |
 | `decision_log` | Audit trail of decisions | `limit` (positive int). Include in **every** workflow so the human ownership trail is on screen. |
 | `usage_counter` | Count of workflow runs | `label` only. |
+| `triage_verdict` | Closed-set verdict card (module wave 1) | Large verdict chip + one-line reason (the judge's question + confidence) + the chosen follow-up. Reads `judge_id` (and optional `follow_up_judge_id`) from the decisions ledger; `verdicts` maps answer values to labels. |
+| `quote_panel` | Quote / price card (module wave 1) | Headline price band (from `band_judge_id` decision through the `bands` map), itemised `lines`, `basis` footnote (job characteristics, never hours), `status` chip (draft/sent/accepted/expired). |
+| `escalation_card` | Human handoff with context (module wave 1) | Named `contact` + `reason` + optional `reference` + one action button. Optional `judge_id` shows the linked decision; below-review confidence is highlighted. |
+| `thread_preview` | Joined conversation view (module wave 1) | Read-only chat-style mini transcript: photo chip (from `photo_slot_key` intake state) → clarifying question → answer → quote (from `follow_up_judge_id` / `quote_judge_id` ledger rows). Only sources that produced something render. |
+| `status_queue` | Ticket / order queue with actions (module wave 2) | Sortable (severity) and filterable rows with severity colour, state chips, and EXACTLY two per-row action buttons from the spec (`actions` — the "one yes, one not yet" shape). Rows are spec data in demos. |
+| `alert_feed` | Ranked AI alerts (module wave 2) | Stacked alert cards: severity colour bar, source record, age, one deep-link button. `critical_after_days` escalates aged alerts; ranking is severity then age. |
+| `kpi_tiles` | Headline metric tiles (module wave 2) | 2–4 tiles (pinned in schema): tabular numerals, optional spec-supplied delta arrows. Values derive from the decisions ledger; unknown `metric` names fall back to the decision count (same rule as `monitoring`). |
+| `pipeline_tracker` | Stage tracker (module wave 2) | Horizontal stage chips (done/current/pending) with count badges per stage; `stages` (with optional counts) from spec. The current stage resolves from the `current_judge_id` decision, falling back to `current`. |
 
 ## Judge patterns + thresholds
 
@@ -130,12 +140,26 @@ this is the differentiator against the failed competitor product.
 
 ## Named recipes
 
-- **Photo triage** (cleaning, repairs, damage assessment): `file_upload`
-  (+ `text_field` or `chat` for context) → legibility/photo-quality judge →
-  item archetype judge → one follow-up judge (the single question customers
-  answer reliably) → confidence_meter on each of the three judges,
-  `analysis`, `decision_log`, `usage_counter`. *Flagship: Clean Shades
-  photo-to-quote triage.*
+- **Photo triage** (cleaning, repairs, damage assessment): intake is a `chat`
+  (mounted directly) plus `photo_slot` per item with capture hints (rail in
+  frame, doorway shot, fabric tag) and a `follow_up_card` carrying the
+  pre-authored asks → legibility judge (`{quotable, one_ask, site_visit}`) →
+  item archetype judge → one follow-up judge (which pre-authored ask unblocks
+  the job) → price-band judge (`{band_a, band_b, band_c, needs_visit}`) →
+  dashboard: `triage_verdict`, `quote_panel` (non-hourly basis footnote),
+  `thread_preview`, `escalation_card`, `confidence_meter` on the judges,
+  `decision_log`, `usage_counter`. *Flagship: Clean Shades photo-to-quote
+  triage.*
+- **Operations desk** (IT ticket triage, retail omnichannel): intake is a
+  `chat` ("describe the problem like you'd WhatsApp it") plus a `form`
+  (affected person, office, device — or channels/store) → severity judge →
+  category judge → route judge (`{self_serve, automated, human_escalate}`) →
+  dashboard: `status_queue` with exactly two per-row actions (Fulfil / Not
+  yet), `alert_feed` (oversell risk, expiring quotations, price
+  discrepancies), `kpi_tiles` (orders overnight, aged stock, online vs
+  physical), `pipeline_tracker` (order → packed → dispatched, or quotation →
+  PO → DO → invoice → payment), `escalation_card` for human-escalate routes,
+  `decision_log`, `usage_counter`.
 - **Document intake review** (claims, compliance packs): `file_upload` +
   `form` → completeness judge → quality/legibility judge → confidence_meter
   on each, `analysis` (`judges`), `decision_log`, `usage_counter`.

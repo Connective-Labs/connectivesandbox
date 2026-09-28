@@ -10,13 +10,13 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare } from 'lucide-react'
+import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare, MonitorCheck } from 'lucide-react'
 
 import { GhostButton, PrimaryButton } from '@/components/ui/Primitives'
 import { cn } from '@/lib/utils'
 
 export interface BuilderRecipe {
-  id: 'photo-triage' | 'document-intake' | 'approval-desk' | 'something-else'
+  id: 'photo-triage' | 'operations-desk' | 'document-intake' | 'approval-desk' | 'something-else'
   name: string
   /** 5-8 word fragment — copy diet applies. */
   description: string
@@ -39,10 +39,26 @@ export const RECIPES: readonly BuilderRecipe[] = [
     icon: Camera,
     seed: (client) =>
       `My client is ${client ?? '[client]'}. Customers send us photos and we need to decide: ` +
-      'handle straight away, ask one follow-up question, or escalate to a person. Build the workflow. ' +
-      'The details to pin down: what customers are photographing ([what they clean or repair]), ' +
-      'what makes a photo unusable ([legibility bar]), and the one follow-up question customers ' +
-      'answer reliably ([follow-up question]).',
+      'handle straight away, ask one follow-up question, or escalate to a person. Build the workflow ' +
+      'with the photo triage modules: photo_slot capture, the follow-up card, the triage verdict and ' +
+      'quote panels, and the joined thread view. The details to pin down: what customers are ' +
+      'photographing ([what they clean or repair]), what makes a photo unusable ([legibility bar]), ' +
+      'the pre-authored follow-up asks ([follow-up questions]), and how prices band by job ' +
+      'characteristics ([price bands]).',
+  },
+  {
+    id: 'operations-desk',
+    name: 'Operations desk',
+    description: 'Tickets and orders on one queue, two buttons',
+    shape: 'chat + form · 3 judges · queue',
+    icon: MonitorCheck,
+    seed: (client) =>
+      `My client is ${client ?? '[client]'}. Work arrives by WhatsApp and email and we need ONE ` +
+      'desk: items land in a queue with severity and state, alerts surface what needs chasing, and ' +
+      'each row carries exactly two buttons — one to say yes, one to say not yet. Build the operations ' +
+      'desk workflow. The details to pin down: what an item is ([ticket or order shape]), the ' +
+      'severity levels ([severity levels]), the routing outcome ([routing outcomes]), and the two ' +
+      'per-row actions ([action pair]).',
   },
   {
     id: 'document-intake',
