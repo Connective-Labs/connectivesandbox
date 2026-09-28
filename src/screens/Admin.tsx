@@ -10,6 +10,7 @@ import { Building2, Check, ChevronDown, Pencil, Send, Trash2, Workflow, X } from
 
 import AppTopBar from '@/components/AppTopBar'
 import { RecipePicker } from '@/components/admin/RecipePicker'
+import { LiveBuild } from '@/components/admin/LiveBuild'
 import WorkspaceBody from '@/components/workspace/WorkspaceBody'
 import { Bubble, DaySeparator, isNewDay } from '@/components/chat/Bubble'
 import { Markdown } from '@/components/chat/Markdown'
@@ -26,6 +27,7 @@ import {
   listClients,
   renameClient,
 } from '@/data/adapters/clients'
+import { markDraftPublished, type SpecDraft } from '@/data/adapters/live'
 import {
   createWorkflow,
   deleteWorkflow,
@@ -235,6 +237,11 @@ export default function Admin() {
   const [tab, setTab] = useState<'preview' | 'json'>('preview')
   const [specSource, setSpecSource] = useState('')
   const [publishedMessage, setPublishedMessage] = useState<string | null>(null)
+  // Centre-column mode: builder chat (primary path) or live transcription
+  // build (secondary ingestion channel — recipes/typing stay the default).
+  const [mode, setMode] = useState<'chat' | 'live'>('chat')
+  const [storedSpec, setStoredSpec] = useState<WorkflowSpec | null>(null)
+  const [activeDraft, setActiveDraft] = useState<SpecDraft | null>(null)
 
   // CRUD chrome: one open piece at a time per list.
   const [newClientOpen, setNewClientOpen] = useState(false)
@@ -305,11 +312,15 @@ export default function Admin() {
   useEffect(() => {
     if (selectedWorkflowId === null) {
       setSpecSource('')
+      setStoredSpec(null)
       return
     }
     let active = true
     void getWorkflowSpec(selectedWorkflowId).then((loaded) => {
-      if (active) setSpecSource(loaded !== null ? JSON.stringify(loaded, null, 2) : '')
+      if (active) {
+        setSpecSource(loaded !== null ? JSON.stringify(loaded, null, 2) : '')
+        setStoredSpec(loaded)
+      }
     })
     return () => {
       active = false
@@ -520,6 +531,9 @@ export default function Admin() {
   const publish = async () => {
     if (validation.state !== 'valid' || selectedWorkflow === null) return
     await saveWorkflowSpec(selectedWorkflow.id, validation.spec)
+    // Publishing a live transcript draft follows the same publish path; the
+    // draft is just flagged so the rail shows it was sent (rep = UAT gate).
+    if (activeDraft !== null) void markDraftPublished(activeDraft.id, true).catch(() => {})
     setPublishedMessage(
       `Published “${validation.spec.name}” to ${selectedClient?.name ?? 'client'} — v${selectedWorkflow.version + 1}`,
     )
@@ -773,9 +787,26 @@ export default function Admin() {
           {leftColumn}
         </CollapsibleRail>
 
-        {/* Centre column: workflow-builder chat, scoped to client+workflow */}
+        {/* Centre column: workflow-builder chat (primary) or live build
+            (secondary ingestion channel), scoped to client+workflow */}
         <main className="flex min-h-[420px] min-w-0 flex-1 flex-col lg:min-h-0">
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-2.5">
+            <div className="flex shrink-0 gap-1 rounded-full border border-slate-200 bg-white p-0.5">
+              {(['chat', 'live'] as const).map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  onClick={() => setMode(entry)}
+                  aria-pressed={mode === entry}
+                  className={cn(
+                    'rounded-full px-3 py-1 text-xs font-semibold transition-colors',
+                    mode === entry ? 'bg-accent text-white shadow-sm' : 'text-slate-500 hover:text-ink',
+                  )}
+                >
+                  {entry === 'chat' ? 'Builder' : 'Live build'}
+                </button>
+              ))}
+            </div>
             <div className="flex min-w-0 flex-1 items-center gap-2">
               <p className="shrink-0 truncate text-sm">
                 <span className="font-semibold text-ink">{selectedClient?.name ?? 'No client selected'}</span>
@@ -831,6 +862,8 @@ export default function Admin() {
             )}
           </div>
 
+          {mode === 'chat' ? (
+            <>
           <div
             ref={chatScrollRef}
             onScroll={onChatScroll}
@@ -911,6 +944,16 @@ export default function Admin() {
           <p className="shrink-0 pb-2.5 text-center text-xs font-semibold uppercase tracking-widest text-slate-400">
             GLM 5.3 Flash
           </p>
+              </>
+          ) : (
+            <LiveBuild
+              clientId={selectedClientId}
+              workflowId={selectedWorkflowId}
+              storedSpec={storedSpec}
+              onLoadSpec={loadSpecIntoPreview}
+              onActiveDraftChange={setActiveDraft}
+            />
+          )}
         </main>
 
         {/* Right column: live preview, raw JSON, validation, publish */}
