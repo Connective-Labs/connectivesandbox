@@ -1,10 +1,19 @@
+-- RESTORED 2026-09-28 (livebuild v2): this migration was applied to the
+-- remote database out-of-band (never committed). The statements below were
+-- recovered verbatim from supabase_migrations.schema_migrations so the local
+-- history matches the deployed database. The on-conflict upsert below is the
+-- idempotency guard.
+--
 -- Module waves 1 + 2 (2026-09-30): ten new registry modules
 -- (photo_slot, follow_up_card, triage_verdict, quote_panel, escalation_card,
 -- thread_preview, status_queue, alert_feed, kpi_tiles, pipeline_tracker)
 -- join the MODULES CATALOGUE, and the recipes update: Photo triage now
 -- composes the Clean Shades flagship set, and the Operations desk recipe
--- (LiT ticket triage / retail omnichannel) is added. The transcript
--- screener's catalogue gains them the same way (it reads this row).
+-- (LiT ticket triage / retail omnichannel) is added. Since the livebuild v2
+-- fact-ledger rearchitecture, the live-build screener/extractor reads its
+-- closed key space from src/engine/catalogue.ts — the SAME menu this row
+-- spells out — so this row and that module are kept in lockstep as the one
+-- constraint layer for both the chat builder and the live-build compilers.
 -- docs/modules.md is the prose record of the same catalogue.
 
 insert into public.agent_instructions (key, content)
@@ -89,7 +98,9 @@ Dashboard panels (each with a unique id):
 
 7. Refuse to invent components. If the client needs an interaction no registered component supports, apply the refusal script; do not approximate with an unsupported component.
 
-8. Never emit code, JSX, HTML, or CSS. Your only structured output is the WorkflowSpec JSON object; all other output is plain prose.$pb$
+8. Never emit code, JSX, HTML, or CSS. Your only structured output is the WorkflowSpec JSON object; all other output is plain prose.
+
+9. LIVE BUILD — compiled, never generated. When a rep dictates a workflow in the Live build tab, the pipeline runs TWO jev stages — stage 1 screens the rolling transcript for material change, stage 2 (only on material change) extracts keyed fact operations over the closed catalogue key space — and the spec is then compiled deterministically from the replayed fact ledger, one element per key, deduped by construction. An LLM fills STRING SLOTS ONLY (labels, hints, question wording) for newly created elements; it can never add, remove, reorder, or re-key anything. Drafts are never rejected: the compilers guarantee spec validity by construction, falling back to the recipe baseline on a bug-level failure. The catalogue and recipes above are the single constraint layer for BOTH this chat builder and those live-build compilers — never describe an intake element or dashboard panel outside them, on either path.$pb$
   )
 on conflict (key) do update
   set content = excluded.content,

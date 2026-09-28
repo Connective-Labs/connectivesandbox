@@ -185,6 +185,9 @@ begin
   select count(*) into n from public.transcript_segments;
   if n <> 0 then raise exception 'LEAK: A read transcript_segments (% rows)', n; end if;
 
+  select count(*) into n from public.transcript_facts;
+  if n <> 0 then raise exception 'LEAK: A read transcript_facts (% rows)', n; end if;
+
   select count(*) into n from public.spec_drafts;
   if n <> 0 then raise exception 'LEAK: A read spec_drafts (% rows)', n; end if;
 
@@ -199,6 +202,14 @@ begin
     insert into public.transcript_segments (client_id, session_id, segment_index, text)
     values ('11111111-1111-1111-1111-111111111111', 'isolation-test-call', 0, 'intrusion');
     raise exception 'LEAK: A inserted a transcript_segment';
+  exception
+    when insufficient_privilege then null; -- correctly rejected by RLS
+  end;
+
+  begin
+    insert into public.transcript_facts (client_id, session_id, key, op, area)
+    values ('11111111-1111-1111-1111-111111111111', 'isolation-test-call', 'intake.photo', 'add', 'intake');
+    raise exception 'LEAK: A inserted a transcript_fact';
   exception
     when insufficient_privilege then null; -- correctly rejected by RLS
   end;
@@ -299,6 +310,9 @@ begin
   select count(*) into n from public.transcript_segments;
   if n <> 0 then raise exception 'LEAK: B read transcript_segments (% rows)', n; end if;
 
+  select count(*) into n from public.transcript_facts;
+  if n <> 0 then raise exception 'LEAK: B read transcript_facts (% rows)', n; end if;
+
   select count(*) into n from public.spec_drafts;
   if n <> 0 then raise exception 'LEAK: B read spec_drafts (% rows)', n; end if;
 
@@ -368,6 +382,9 @@ begin
   select count(*) into n from public.transcript_segments;
   if n <> 0 then raise exception 'LEAK: claimless JWT read transcript_segments (% rows)', n; end if;
 
+  select count(*) into n from public.transcript_facts;
+  if n <> 0 then raise exception 'LEAK: claimless JWT read transcript_facts (% rows)', n; end if;
+
   select count(*) into n from public.spec_drafts;
   if n <> 0 then raise exception 'LEAK: claimless JWT read spec_drafts (% rows)', n; end if;
 
@@ -389,6 +406,7 @@ delete from public.workflows where client_id in ('11111111-1111-1111-1111-111111
 delete from public.clients   where id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
 delete from public.auth_attempts where code_hash = 'isolation-test-hash';
 delete from public.feedback_messages where client_id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
+delete from public.transcript_facts where client_id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222');
 
 do $$
 declare
@@ -399,6 +417,6 @@ begin
   if n <> 0 then raise exception 'CLEANUP FAIL: isolation fixture clients still present'; end if;
 end $$;
 
-select 'ISOLATION TEST: PASS — no cross-tenant leaks across workflows, sessions, messages, artifacts, decisions, clients, agent_instructions, auth_attempts, transcript_segments, spec_drafts, feedback_messages, storage' as result;
+select 'ISOLATION TEST: PASS — no cross-tenant leaks across workflows, sessions, messages, artifacts, decisions, clients, agent_instructions, auth_attempts, transcript_segments, transcript_facts, spec_drafts, feedback_messages, storage' as result;
 
 commit;

@@ -399,28 +399,38 @@ export default function Chat({ component }: { component: ChatComponent | null })
         onScroll={onScroll}
         className="scroll-slim min-h-16 flex-1 space-y-2.5 overflow-y-auto rounded-xl bg-slate-50 px-3 py-3"
       >
-        {/* Inline intake cards — the spec's intake flow inside the one chat. */}
+        {/* Inline intake cards — the spec's intake flow inside the one chat.
+            Mount animation keyed by component id: when a compiled draft adds
+            an element, ONLY the new card animates in (preview delta); existing
+            cards keep their DOM nodes and never re-animate. */}
         {inlineComponents.map((entry) => {
+          const cardMotion = {
+            initial: { opacity: 0, y: 6 },
+            animate: { opacity: 1, y: 0 },
+            transition: { duration: 0.22, ease: 'easeOut' as const },
+          }
           if (submittedCards[entry.id] !== undefined) {
             return (
-              <SubmittedChip
-                key={entry.id}
-                label={inlineLabel(entry)}
-                summary={
-                  entry.type === 'file_upload' ? submittedCards[entry.id] : undefined
-                }
-              />
+              <motion.div key={entry.id} {...cardMotion}>
+                <SubmittedChip
+                  label={inlineLabel(entry)}
+                  summary={
+                    entry.type === 'file_upload' ? submittedCards[entry.id] : undefined
+                  }
+                />
+              </motion.div>
             )
           }
           const Comp = intakeRegistry[entry.type]
           return (
-            <Comp
-              key={entry.id}
-              component={entry}
-              variant="inline"
-              onFiles={(files, sourceId) => addFiles(files, sourceId)}
-              onSubmitted={(summary) => submitCard(entry.id, summary)}
-            />
+            <motion.div key={entry.id} {...cardMotion}>
+              <Comp
+                component={entry}
+                variant="inline"
+                onFiles={(files, sourceId) => addFiles(files, sourceId)}
+                onSubmitted={(summary) => submitCard(entry.id, summary)}
+              />
+            </motion.div>
           )
         })}
 
