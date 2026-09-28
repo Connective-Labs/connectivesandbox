@@ -106,23 +106,27 @@ ok "beat 2: small talk screened as no_change (cheap stage-1 only)"
 # --- 5. Beats 3–5: REPETITION — the photo requirement three times, escalation
 #         twice. Each keyed fact must land ONCE in the replayed ledger. ------
 sleep 6
-R3="$(post /live-facts "$(send_beat 2 'like I said, customers send us photos of the curtains — that is how every job starts')")"
+R3="$(post /live-facts "$(send_beat 2 'customers describe the job in their own words when they message us, like a whatsapp')")"
 echo "$R3" | jq -e '.error == null' >/dev/null || fail "beat 3 errored: $R3"
 sleep 6
-R4="$(post /live-facts "$(send_beat 3 'so yes — the photos come in first, then we decide; heavy staining on delicate silk means a human always looks at it before we commit')")"
+R4="$(post /live-facts "$(send_beat 3 'like I said, customers send us photos of the curtains — that is how every job starts')")"
 echo "$R4" | jq -e '.error == null' >/dev/null || fail "beat 4 errored: $R4"
 sleep 6
-R5="$(post /live-facts "$(send_beat 4 'to repeat: photos first, and a person reviews anything risky — that is the whole flow')")"
+R5="$(post /live-facts "$(send_beat 4 'so yes — the photos come in first, then we decide; heavy staining on delicate silk means a human always looks at it before we commit')")"
 echo "$R5" | jq -e '.error == null' >/dev/null || fail "beat 5 errored: $R5"
+sleep 6
+R6="$(post /live-facts "$(send_beat 5 'to repeat: photos first, and a person reviews anything risky — that is the whole flow')")"
+echo "$R6" | jq -e '.error == null' >/dev/null || fail "beat 6 errored: $R6"
 
 # Replay the ledger and assert idempotency by key.
-LEDGER="$(get "/live-facts?client_id=$CLIENT_ID&session_id=$SESSION_ID")"
+LEDGER="$(get "/live-facts?client_id=$CLIENT_ID&session_id=$SESSION_ID&workflow_id=$WORKFLOW_ID")"
 echo "$LEDGER" | jq -e '.ledger != null' >/dev/null || fail "ledger replay failed: $LEDGER"
 PHOTO_COUNT="$(echo "$LEDGER" | jq '[.ledger[] | select(.key == "intake.photo" and .active)] | length')"
 [ "$PHOTO_COUNT" = "1" ] || fail "intake.photo must replay to ONE active fact, got $PHOTO_COUNT"
 ESC_COUNT="$(echo "$LEDGER" | jq '[.ledger[] | select(.key == "judge.escalation" and .active)] | length')"
 [ "$ESC_COUNT" = "1" ] || fail "judge.escalation must replay to ONE active fact, got $ESC_COUNT"
 SIG="$(echo "$LEDGER" | jq -r '.signature')"
+STRUCT_SIG="$(echo "$LEDGER" | jq -r '.structural_signature')"
 [ -n "$SIG" ] || fail "ledger signature missing: $LEDGER"
 ok "repetition idempotency: 3x photo + 2x escalation → each key exactly once (signature ${SIG:0:40}…)"
 
@@ -130,15 +134,15 @@ ok "repetition idempotency: 3x photo + 2x escalation → each key exactly once (
 #         would (8s rolling chunks splitting sentences) in a fresh session. ---
 SESSION_ID="e2e-facts-parity-$STAMP"
 > "$DIGEST_FILE"
-P1="$(post /live-facts "$(send_beat 0 'my client is a curtain cleaning company; customers need to send photos of the curtains so we can decide what to do like I said, customers send us photos of the curtains — that is how every job starts')")"
+P1="$(post /live-facts "$(send_beat 0 'my client is a curtain cleaning company; customers need to send photos of the curtains so we can decide what to do thanks so much, that is really helpful, lovely weather this week isn'"'"'t it customers describe the job in their own words when they message us, like a whatsapp')")"
 echo "$P1" | jq -e '.error == null' >/dev/null || fail "parity beat 1 errored: $P1"
 sleep 9
-P2="$(post /live-facts "$(send_beat 1 'so yes — the photos come in first, then we decide; heavy staining on delicate silk means a human always looks at it before we commit to repeat: photos first, and a person reviews anything risky — that is the whole flow')")"
+P2="$(post /live-facts "$(send_beat 1 'like I said, customers send us photos of the curtains — that is how every job starts so yes — the photos come in first, then we decide; heavy staining on delicate silk means a human always looks at it before we commit to repeat: photos first, and a person reviews anything risky — that is the whole flow')")"
 echo "$P2" | jq -e '.error == null' >/dev/null || fail "parity beat 2 errored: $P2"
-PLEDGER="$(get "/live-facts?client_id=$CLIENT_ID&session_id=$SESSION_ID")"
-PSIG="$(echo "$PLEDGER" | jq -r '.signature')"
-[ "$PSIG" = "$SIG" ] || fail "cross-engine parity broken: sentence-chunked signature ${SIG:0:60}… vs time-chunked ${PSIG:0:60}…"
-ok "cross-engine parity: sentence-chunked vs 8s-chunked → identical ledger signature"
+PLEDGER="$(get "/live-facts?client_id=$CLIENT_ID&session_id=$SESSION_ID&workflow_id=$WORKFLOW_ID")"
+PSIG="$(echo "$PLEDGER" | jq -r '.structural_signature')"
+[ "$PSIG" = "$STRUCT_SIG" ] || fail "cross-engine parity broken: sentence-chunked structural signature ${STRUCT_SIG:0:60}… vs time-chunked ${PSIG:0:60}…"
+ok "cross-engine parity: sentence-chunked vs 8s-chunked → identical structural ledger signature"
 
 # Back to the primary session for the draft assertions.
 SESSION_ID="e2e-facts-$STAMP"
@@ -156,7 +160,9 @@ ok "no duplicate component/judge/panel ids inside any draft ($COUNT drafts)"
 
 # --- 8. Flush compile: same signature → no new draft; stable JSON ------------
 LAST_DRAFT_SIG_DRAFT_ID="$(echo "$DRAFTS" | jq -r '.drafts[0].id')"
-RFLUSH="$(post /live-facts "{\"client_id\":\"$CLIENT_ID\",\"workflow_id\":\"$WORKFLOW_ID\",\"session_id\":\"$SESSION_ID\",\"compile_signature\":\"$SIG\"}")"
+FLUSH_BODY="$(jq -n --arg c "$CLIENT_ID" --arg w "$WORKFLOW_ID" --arg s "$SESSION_ID" --arg sig "$SIG" \
+  '{client_id:$c, workflow_id:$w, session_id:$s, compile_signature:$sig}')"
+RFLUSH="$(post /live-facts "$FLUSH_BODY")"
 echo "$RFLUSH" | jq -e '.changed == false' >/dev/null || fail "flush with unchanged signature should be a no-op: $RFLUSH"
 ok "flush compile: unchanged ledger signature → no new draft (byte-stable projection)"
 

@@ -219,17 +219,20 @@ function screenState(input: {
   ledger: string
 }): string {
   return [
-    'You are the material-change screener for a live workflow-building call. ' +
-      'The state is the rolling transcript of a discovery call between a rep and their client, ' +
-      'and the workflow facts captured so far. Judge ONLY whether the newest words introduce or ' +
-      'alter what the workflow must do — decision type, intake shape, judge set, escalation path, ' +
-      'or dashboard needs. Small talk, pleasantries, filler, restatements of already-captured facts, ' +
-      'and wording refinements are NOT material changes.',
+    'You are the discovery-call screener for Connective Sandbox. ' +
+      'The state is a rolling digest of a sales call between a rep and their client, the newest ' +
+      'transcribed words, and the workflow facts captured so far. Answer the question.',
+    'RUBRIC FIELDS: decision type, intake shape, judge set, escalation path, dashboard needs.',
     `FACTS CAPTURED SO FAR:\n${input.ledger}`,
     `ROLLING TRANSCRIPT (oldest → newest):\n${(input.transcriptDigest ?? '').slice(-MAX_DIGEST_CHARS)}`,
     input.segments.length > 0 ? `NEWEST SENTENCES:\n${input.segments.map((text) => `- ${text}`).join('\n')}` : '',
     input.rollingTail ? `STILL BEING SPOKEN (may be incomplete): ${input.rollingTail}` : '',
-    'Answer materiality.',
+    'QUESTION CRITERIA:',
+    `materiality: ${JSON.stringify({
+      material_change: 'The segments introduce or alter decision type, intake shape, judge set, or escalation path.',
+      minor_change: 'A refinement that does not alter structure but could improve wording or details.',
+      no_change: 'Small talk, pleasantries, filler, or nothing material.',
+    })}`,
   ].filter((part) => part.length > 0).join('\n\n')
 }
 
@@ -243,15 +246,18 @@ async function screenMateriality(input: {
     materiality: {
       type: 'choice',
       criteria: {
-        material_change:
-          'The newest words introduce or alter decision type, intake shape, judge set, escalation path, or dashboard needs.',
-        no_change:
-          'Small talk, filler, pleasantries, restatement of captured facts, or wording refinements only.',
+        material_change: 'Introduces or alters decision type, intake shape, judge set, or escalation path.',
+        minor_change: 'A refinement that does not alter structure but could improve wording or details.',
+        no_change: 'Small talk, pleasantries, filler, or nothing material.',
       },
     },
   })
   if ('error' in result) return result
-  const choice = parseChoice(result.answers.materiality, ['material_change', 'no_change'], 'no_change')
+  const choice = parseChoice(
+    result.answers.materiality,
+    ['material_change', 'minor_change', 'no_change'],
+    'no_change',
+  )
   const confidence = result.answers.materiality?.confidence
   return {
     material: choice === 'material_change',
@@ -710,7 +716,9 @@ Deno.serve(async (request) => {
     const url = new URL(request.url)
 
     // ---------------------------------------------------------------
-    // GET — replayed ledger state for a session (admin reload)
+    // GET — replayed ledger state for a session (admin reload). The recipe
+    // context MUST match the POST path (explicit recipe_id, else inferred
+    // from the workflow name) so signatures are comparable across calls.
     // ---------------------------------------------------------------
     if (request.method === 'GET') {
       const clientId = url.searchParams.get('client_id') ?? ''
@@ -718,12 +726,22 @@ Deno.serve(async (request) => {
       if (!UUID_RE.test(clientId) || sessionId.length === 0) {
         return jsonResponse(request, { error: 'client_id and session_id are required' }, 400)
       }
+      let recipeId = normaliseRecipeId(url.searchParams.get('recipe_id'))
+      const workflowIdParam = url.searchParams.get('workflow_id')
+      if (recipeId === 'generic' && workflowIdParam !== null && UUID_RE.test(workflowIdParam)) {
+        const rows = await restSelect<{ name: string }>('workflows', {
+          id: `eq.${workflowIdParam}`,
+          select: 'name',
+          limit: '1',
+        })
+        if (rows.length > 0) recipeId = recipeFromName(rows[0].name)
+      }
       const facts = await loadLedgerFacts(clientId, sessionId)
       const state = applyFacts(facts)
-      const recipeId = normaliseRecipeId(url.searchParams.get('recipe_id'))
       return jsonResponse(request, {
         ledger: ledgerView(state),
         signature: ledgerSignature(state, recipeId),
+        structural_signature: ledgerSignature(state, recipeId, { strings: false }),
         fact_count: facts.length,
       })
     }
@@ -797,6 +815,10 @@ Deno.serve(async (request) => {
       return jsonResponse(request, { error: 'new_segments or rolling_tail are required' }, 400)
     }
 
+    // Screen cooldown anchor FIRST — the segments persisted below belong to
+    // THIS request and must not advance the cadence window against itself.
+    const lastScreen = await lastScreenAt(clientId, sessionId)
+
     // 1. Persist the final segments (durability; the rolling tail is ephemeral).
     if (segments.length > 0) {
       const indexed = body.new_segments?.every?.((segment) => typeof segment?.segment_index === 'number') ?? false
@@ -810,7 +832,6 @@ Deno.serve(async (request) => {
     }
 
     // 2. Screen cooldown (~5s cadence, durable anchor) — then STAGE 1.
-    const lastScreen = await lastScreenAt(clientId, sessionId)
     if (Date.now() - lastScreen < SCREEN_COOLDOWN_SECONDS * 1000) {
       return jsonResponse(request, {
         changed: false,

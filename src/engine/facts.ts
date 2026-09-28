@@ -176,16 +176,25 @@ export function activeEntries(state: FactLedgerState): FactStateEntry[] {
 }
 
 /**
- * Deterministic signature of the compiled-relevant ledger state: two states
- * with the same signature compile to the same spec (given the same recipe).
- * Used to skip drafts when appended facts changed nothing material.
+ * Deterministic signature of the ledger state. With strings included (the
+ * default) it captures everything the compilers consume — used to skip
+ * drafts when appended facts changed nothing material. With strings excluded
+ * it is the STRUCTURAL signature: the same facts always yield the same
+ * structural signature regardless of which GLM copy got cached — that is the
+ * cross-engine parity guarantee (engine choice must not change the ledger).
  */
-export function ledgerSignature(state: FactLedgerState, recipeId: string): string {
+export function ledgerSignature(
+  state: FactLedgerState,
+  recipeId: string,
+  options: { strings?: boolean } = {},
+): string {
+  const includeStrings = options.strings !== false
   const parts = [`recipe:${recipeId}`]
   for (const entry of activeEntries(state)) {
-    parts.push(
-      `${entry.key}|${stableStringify(entry.detail)}`,
-    )
+    const detail = includeStrings
+      ? entry.detail
+      : { meta: entry.detail.meta }
+    parts.push(`${entry.key}|${stableStringify(detail)}`)
   }
   return parts.join('\n')
 }
