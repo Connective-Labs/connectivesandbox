@@ -5,50 +5,11 @@
 // that cannot be traced to decisions is a bug.
 
 import type { DashboardPanel } from '@/engine/types'
-import { formatCountCompact, formatPercent } from '@/lib/format'
+import { deriveMetric } from '@/lib/metrics'
 import { Skeleton } from '@/components/ui/Primitives'
 import { useWorkspace } from '@/state/workspace'
 
 export type MonitoringPanel = Extract<DashboardPanel, { type: 'monitoring' }>
-
-interface MetricValue {
-  label: string
-  value: string
-}
-
-function deriveMetric(name: string, decisions: { confidence: number; disposition: string }[]): MetricValue {
-  const label = name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
-  const total = decisions.length
-  if (total === 0) return { label, value: '—' }
-  switch (name) {
-    case 'average_confidence':
-    case 'mean_confidence': {
-      const mean = decisions.reduce((sum, row) => sum + row.confidence, 0) / total
-      return { label, value: formatPercent(mean) }
-    }
-    case 'review_rate': {
-      const inReview = decisions.filter((row) => row.disposition === 'review').length
-      return { label, value: formatPercent(inReview / total) }
-    }
-    case 'escalation_rate': {
-      const escalated = decisions.filter((row) => row.disposition === 'escalated').length
-      return { label, value: formatPercent(escalated / total) }
-    }
-    case 'auto_rate':
-    case 'auto_decision_rate': {
-      const auto = decisions.filter((row) => row.disposition === 'auto').length
-      return { label, value: formatPercent(auto / total) }
-    }
-    case 'documents_processed':
-    case 'visits_booked':
-    case 'decisions_total':
-    case 'decisions_made':
-    default:
-      // Unknown metric names fall back to the ledger's decision count so no
-      // tile can show a number that did not come from decisions.
-      return { label, value: formatCountCompact(total) }
-  }
-}
 
 export default function Monitoring({ panel }: { panel: MonitoringPanel }) {
   const { decisions, runStatus } = useWorkspace()
