@@ -313,6 +313,39 @@ dependencies beyond the standard scaffold set without a captain decision.
   classification set (reports accuracy), draft/no-draft split, rate guard,
   inbox flow, publish/discard, and cross-client gateway isolation.
 
+## Polish 6 — render-first live build, e2e self-cleanup, usage strip, skeleton discipline
+
+- **Cadence + render-first strings.** The draft floor is 4s
+  (`DRAFT_COOLDOWN_SECONDS`, was 10s); stage 1 stays on the ~5s screen cadence
+  and stage 2 on the ~8s extract cadence, so the invocation budget holds.
+  `live-facts` NO LONGER awaits the GLM string pass: drafts compile with
+  catalogue placeholders and return `strings_pending`. The client renders the
+  skeleton immediately, then POSTs `{fill_strings: true}` — that mode runs the
+  one GLM call, caches the strings onto the fact rows (so every future compile
+  carries them), updates the newest transcript draft's spec IN PLACE, and
+  returns the recompiled spec. Admin preview placeholders render draft-styled
+  (`DraftSpecProvider` + `SpecText`, catalogue-placeholder detection) and each
+  landed string fades in by element id; client surfaces are unaffected.
+- **e2e suites self-clean.** All three scripts (`modules-e2e`, `feedback-e2e`,
+  `live-transcribe-e2e`) delete their probe clients by NAME PREFIX with the
+  service_role key in the EXIT trap (no admin session needed, runs on
+  failure), then assert zero rows matching the prefix
+  (`__mod_e2e_*`, `__fb_e2e_*`, `__livefacts_e2e_*`). New tests must follow
+  this pattern — the captain reviews the live DB.
+- **`usage_counter` is a compact stat strip**: small uppercase label,
+  tabular-numeral value with `formatCountCompact` unit scaling (1.2k, 3.4M),
+  truncating as a last resort — no overflow at any viewport. Reads the
+  decisions ledger only (unchanged contract).
+- **Skeleton discipline.** `useGraceSkeleton` (in `ui/Primitives`) holds any
+  loading skeleton ~300ms minimum so it never flashes; applied to the admin
+  rail lists, inbox thread list, live-build draft rail, and the workspace
+  loading pane. Motion sweep: draft chips + fact chips (LiveBuild), verdict
+  flips (TriageVerdict), queue state chips (StatusQueue) animate with
+  framer-motion under the app-wide `reducedMotion="user"` guard.
+- **Capabilities guide.** In-product: `src/components/admin/CapabilitiesGuide.tsx`
+  (collapsible "What can I build?" card set above the centre tabs). Repo doc:
+  `docs/capabilities.md` — keep the two in step when recipes/modules change.
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**
