@@ -11,14 +11,16 @@ import { Building2, Check, ChevronDown, Pencil, Send, Trash2, Workflow, X } from
 import AppTopBar from '@/components/AppTopBar'
 import { RecipePicker } from '@/components/admin/RecipePicker'
 import { LiveBuild } from '@/components/admin/LiveBuild'
+import { CapabilitiesGuide } from '@/components/admin/CapabilitiesGuide'
 import { Inbox } from '@/components/admin/Inbox'
+import { DraftSpecProvider } from '@/components/SpecText'
 import WorkspaceBody from '@/components/workspace/WorkspaceBody'
 import { Bubble, DaySeparator, isNewDay } from '@/components/chat/Bubble'
 import { Markdown } from '@/components/chat/Markdown'
 import { TypingBubble } from '@/components/chat/TypingBubble'
 import { useStickToBottom } from '@/components/chat/useStickToBottom'
 import { CollapsibleRail } from '@/components/ui/CollapsibleRail'
-import { Badge, Eyebrow, GhostButton, PrimaryButton } from '@/components/ui/Primitives'
+import { Badge, Eyebrow, GhostButton, PrimaryButton, Skeleton } from '@/components/ui/Primitives'
 import { safeParseWorkflowSpec } from '@/engine/schema'
 import type { WorkflowSpec } from '@/engine/types'
 import {
@@ -47,6 +49,17 @@ import {
 import type { Client, WorkflowSummary } from '@/data/types'
 import { WorkspaceProvider } from '@/state/workspace'
 import { cn } from '@/lib/utils'
+
+/** Rail loading skeleton (polish 6): three brand rows, no layout jump. */
+function RailSkeletonRows() {
+  return (
+    <div className="space-y-1 px-3 py-1" aria-hidden="true">
+      <Skeleton className="h-10 w-full rounded-lg" />
+      <Skeleton className="h-10 w-full rounded-lg" />
+      <Skeleton className="h-10 w-full rounded-lg" />
+    </div>
+  )
+}
 
 type SpecValidation =
   | { state: 'empty' }
@@ -218,6 +231,10 @@ function InlineConfirm({
 
 export default function Admin() {
   const [clients, setClients] = useState<Client[]>([])
+  // Skeleton discipline (polish 6): the rail shows brand skeletons until the
+  // first data resolves, then swaps once.
+  const [clientsLoaded, setClientsLoaded] = useState(false)
+  const [workflowsLoaded, setWorkflowsLoaded] = useState(false)
   const [accessCodes, setAccessCodes] = useState<Record<string, string>>({})
   const [workflowCounts, setWorkflowCounts] = useState<Record<string, number>>({})
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null)
@@ -296,6 +313,7 @@ export default function Admin() {
 
   async function reloadClients(selectId: string | null) {
     const rows = await listClients()
+    setClientsLoaded(true)
     const codeEntries = await Promise.all(
       rows.map(async (client) => [client.id, await getClientAccessCode(client.id)] as const),
     )
@@ -320,13 +338,16 @@ export default function Admin() {
   useEffect(() => {
     if (selectedClientId === null) {
       setWorkflows([])
+      setWorkflowsLoaded(true)
       setSelectedWorkflowId(null)
       return
     }
     let active = true
+    setWorkflowsLoaded(false)
     void listWorkflows(selectedClientId).then((rows) => {
       if (!active) return
       setWorkflows(rows)
+      setWorkflowsLoaded(true)
       setSelectedWorkflowId((current) => {
         if (current !== null && rows.some((row) => row.id === current)) return current
         return rows[0]?.id ?? null
@@ -605,7 +626,11 @@ export default function Admin() {
         </div>
       )}
       <div className="mt-3 space-y-1">
-        {clients.map((client) =>
+        {!clientsLoaded ? (
+          <RailSkeletonRows />
+        ) : (
+          <>
+          {clients.map((client) =>
           renamingClientId === client.id ? (
             <InlineInput
               key={client.id}
@@ -671,6 +696,8 @@ export default function Admin() {
             </div>
           ),
         )}
+          </>
+        )}
       </div>
 
       <div className="mt-6 flex items-center justify-between gap-2 px-2">
@@ -685,7 +712,11 @@ export default function Admin() {
         </button>
       </div>
       <div className="mt-3 space-y-1">
-        {workflows.map((workflow) =>
+        {!workflowsLoaded ? (
+          <RailSkeletonRows />
+        ) : (
+          <>
+          {workflows.map((workflow) =>
           renamingWorkflowId === workflow.id ? (
             <InlineInput
               key={workflow.id}
@@ -745,8 +776,10 @@ export default function Admin() {
             </div>
           ),
         )}
-        {workflows.length === 0 && (
-          <p className="px-3 text-xs text-slate-400">No workflows yet — start one with New workflow.</p>
+          {workflows.length === 0 && (
+            <p className="px-3 text-xs text-slate-400">No workflows yet — start one with New workflow.</p>
+          )}
+          </>
         )}
       </div>
     </div>
@@ -819,6 +852,7 @@ export default function Admin() {
         {/* Centre column: workflow-builder chat (primary) or live build
             (secondary ingestion channel), scoped to client+workflow */}
         <main className="flex min-h-[420px] min-w-0 flex-1 flex-col lg:min-h-0">
+          <CapabilitiesGuide />
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-2.5">
             <div className="flex shrink-0 gap-1 rounded-full border border-slate-200 bg-white p-0.5">
               {(['chat', 'live', 'inbox'] as const).map((entry) => (
@@ -1050,12 +1084,17 @@ export default function Admin() {
                       workflowId={selectedWorkflowId ?? 'preview'}
                       spec={validation.spec}
                     >
-                      <div className="flex h-full flex-col">
-                        <p className="shrink-0 border-b border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
-                          {validation.spec.name}
-                        </p>
-                        <WorkspaceBody />
-                      </div>
+                      {/* Draft-rendered preview (polish 6): catalogue
+                          placeholders show their draft style and GLM wording
+                          fades in as the parallel string pass lands. */}
+                      <DraftSpecProvider value>
+                        <div className="flex h-full flex-col">
+                          <p className="shrink-0 border-b border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+                            {validation.spec.name}
+                          </p>
+                          <WorkspaceBody />
+                        </div>
+                      </DraftSpecProvider>
                     </WorkspaceProvider>
                   ) : (
                     <div className="flex h-full items-center justify-center p-8 text-center">

@@ -6,6 +6,7 @@
 // and judge results are shared.
 
 import { useEffect, useState } from 'react'
+import { Skeleton, useGraceSkeleton } from '@/components/ui/Primitives'
 import { Layers, MessageSquare } from 'lucide-react'
 
 import AppTopBar from '@/components/AppTopBar'
@@ -26,6 +27,9 @@ export default function Workspace() {
   // Centre surface: the provisioned workflow (default) or the feedback
   // channel (service-team thread).
   const [surface, setSurface] = useState<'workflow' | 'feedback'>('workflow')
+
+  // Skeleton discipline: hold the loading pane for the minimum dwell.
+  const specLoading = useGraceSkeleton(spec === null && selectedId !== null)
 
   useEffect(() => {
     let active = true
@@ -175,8 +179,16 @@ export default function Workspace() {
             <WorkspaceProvider key={spec.name} workflowId={selectedId} spec={spec} mode="live">
               <WorkspaceBody />
             </WorkspaceProvider>
+          ) : specLoading ? (
+            // Skeleton discipline (polish 6): brand skeleton until first data
+            // resolves, then swap once — no empty/populated flicker.
+            <div className="min-h-0 flex-1 space-y-4 px-6 py-6">
+              <Skeleton className="h-3.5 w-44" />
+              <Skeleton className="h-20 w-full rounded-xl" />
+              <Skeleton className="h-36 w-full rounded-xl" />
+            </div>
           ) : (
-            <p className="px-6 py-6 text-sm text-slate-400">Loading workflow…</p>
+            <p className="px-6 py-6 text-sm text-slate-400">No workflow selected.</p>
           )}
         </div>
       </div>

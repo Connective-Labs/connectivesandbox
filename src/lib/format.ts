@@ -40,9 +40,9 @@ export function formatCount(value: number): string {
   return value.toLocaleString('en-SG')
 }
 
-/** Compact units for metric tiles: 1284 -> 1.3k, 37 -> 37. */
+/** Compact units for metric tiles: 1284 -> 1.3k, 3_400_000 -> 3.4M, 37 -> 37. */
 export function formatCountCompact(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
   if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`
   return String(value)
 }

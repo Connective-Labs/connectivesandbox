@@ -2,9 +2,41 @@
 // sparkline. One place so radii, borders, and the single accent stay
 // consistent across the workspace and admin screens.
 
-import type { ButtonHTMLAttributes, ComponentPropsWithoutRef, ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
+
+/**
+ * Skeleton discipline (polish 6): a loading skeleton never flashes. The hook
+ * holds the skeleton on screen for a minimum dwell (default 300ms) once it
+ * has appeared, and swaps to content exactly once when data resolves — no
+ * back-and-forth flicker between empty and populated states.
+ */
+export function useGraceSkeleton(loading: boolean, minimumMs = 300): boolean {
+  const shownAtRef = useRef<number | null>(null)
+  const [hold, setHold] = useState(loading)
+
+  useEffect(() => {
+    if (loading) {
+      if (shownAtRef.current === null) shownAtRef.current = Date.now()
+      setHold(true)
+      return
+    }
+    if (shownAtRef.current === null) {
+      setHold(false)
+      return
+    }
+    const elapsed = Date.now() - shownAtRef.current
+    const remaining = Math.max(0, minimumMs - elapsed)
+    const timer = window.setTimeout(() => {
+      shownAtRef.current = null
+      setHold(false)
+    }, remaining)
+    return () => window.clearTimeout(timer)
+  }, [loading, minimumMs])
+
+  return hold
+}
 
 export function Card({ children, className, ...rest }: ComponentPropsWithoutRef<'div'>) {
   return (

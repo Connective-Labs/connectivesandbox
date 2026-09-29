@@ -7,6 +7,7 @@
 // ledger relationship is documented, never faked.
 
 import { useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import type { DashboardPanel } from '@/engine/types'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/Primitives'
@@ -130,9 +131,18 @@ export default function StatusQueue({ panel }: { panel: StatusQueuePanel }) {
                     </span>
                   </td>
                   <td className="py-2.5 pr-3">
-                    <span className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold', actedOn ? 'bg-accent-wash text-orange-700' : 'bg-slate-100 text-slate-600')}>
-                      {state}
-                    </span>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={state}
+                        initial={{ opacity: 0, y: 3 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -3 }}
+                        transition={{ duration: 0.16, ease: 'easeOut' }}
+                        className={cn('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold', actedOn ? 'bg-accent-wash text-orange-700' : 'bg-slate-100 text-slate-600')}
+                      >
+                        {state}
+                      </motion.span>
+                    </AnimatePresence>
                   </td>
                   <td className="py-2.5">
                     <div className="flex justify-end gap-1.5">

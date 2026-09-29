@@ -7,6 +7,8 @@
 // decision. Nothing is fabricated; before a run the card shows its empty
 // state.
 
+import { motion } from 'framer-motion'
+
 import type { DashboardPanel } from '@/engine/types'
 import { formatAnswerValue, formatPercent } from '@/lib/format'
 import { Skeleton } from '@/components/ui/Primitives'
@@ -53,9 +55,15 @@ export default function TriageVerdict({ panel }: { panel: TriageVerdictPanel }) 
     <div className="space-y-3">
       <h3 className="font-semibold tracking-tight text-ink">Triage verdict</h3>
       <div className="flex flex-wrap items-center gap-4">
-        <span className="inline-flex items-center rounded-full bg-accent px-6 py-2.5 text-lg font-bold uppercase tracking-wide text-white shadow-sm">
+        <motion.span
+          key={verdictLabel}
+          initial={{ opacity: 0, scale: 0.92 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.22, ease: 'easeOut' }}
+          className="inline-flex items-center rounded-full bg-accent px-6 py-2.5 text-lg font-bold uppercase tracking-wide text-white shadow-sm"
+        >
           {verdictLabel}
-        </span>
+        </motion.span>
         <p className="max-w-xl text-sm text-slate-700">
           {verdictRow.question} ·{' '}
           <span className="font-semibold text-ink">{formatPercent(verdictRow.confidence)}</span>{' '}

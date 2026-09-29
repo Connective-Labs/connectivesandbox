@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, Inbox as InboxIcon, Send, Trash2, X } from 'lucide-react'
 
-import { Badge, Eyebrow, GhostButton, PrimaryButton } from '@/components/ui/Primitives'
+import { Badge, Eyebrow, GhostButton, PrimaryButton, Skeleton, useGraceSkeleton } from '@/components/ui/Primitives'
 import { Bubble, DaySeparator, isNewDay } from '@/components/chat/Bubble'
 import { useStickToBottom } from '@/components/chat/useStickToBottom'
 import { cn } from '@/lib/utils'
@@ -76,8 +76,12 @@ export function Inbox({ initialClientId, onLoadSpec, onActiveDraftChange, onSele
     stick()
   }, [messages, stick])
 
+  // Skeleton discipline (polish 6): skeletons until the first poll resolves.
+  const [threadsLoaded, setThreadsLoaded] = useState(false)
+  const threadsLoading = useGraceSkeleton(!threadsLoaded)
   const refreshThreads = useCallback(async () => {
     setThreads(await listFeedbackThreads())
+    setThreadsLoaded(true)
   }, [])
 
   const refreshThread = useCallback(async (clientId: string) => {
@@ -174,7 +178,14 @@ export function Inbox({ initialClientId, onLoadSpec, onActiveDraftChange, onSele
           {totalUnread > 0 && <Badge tone="invalid">{totalUnread} unread</Badge>}
         </div>
         <div className="scroll-slim min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-          {threads.length === 0 && (
+          {threadsLoading && (
+            <div className="space-y-1 px-1 pt-1" aria-hidden="true">
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+              <Skeleton className="h-12 w-full rounded-lg" />
+            </div>
+          )}
+          {!threadsLoading && threads.length === 0 && (
             <div className="px-3 py-6 text-center">
               <InboxIcon size={20} aria-hidden="true" className="mx-auto text-slate-300" />
               <p className="mt-2 text-xs leading-relaxed text-slate-400">
