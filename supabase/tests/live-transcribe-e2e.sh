@@ -10,7 +10,7 @@
 #      judge id, or panel id repeats; regenerating (flush compile) is stable.
 #   3. DRAFTS ALWAYS VALIDATE and are never rejected (never-reject contract).
 #   4. RATE/COST GUARDS — screen cadence ~5s, extract cadence ~8s, draft floor
-#      ~10s; a rambling burst produces bounded jev calls and drafts.
+#      ~4s (polish 6); a rambling burst produces bounded jev calls and drafts.
 #   5. CROSS-ENGINE PARITY — the same transcript fed as sentence-final chunks
 #      (Web Speech path) and as 8s rolling chunks (server STT path) yields the
 #      same ledger signature.
@@ -33,7 +33,6 @@ source "$ADMIN_ENV"
 BASE="${SUPABASE_URL%/}/functions/v1"
 APIKEY="$SUPABASE_ANON_KEY"
 JAR="$(mktemp)"
-trap 'rm -f "$JAR"' EXIT
 
 PASS=0
 fail() { echo "E2E FAIL: $1" >&2; exit 1; }
@@ -62,17 +61,27 @@ WORKFLOW_ID="$(echo "$WORKFLOW" | jq -r '.workflow.id // empty')"
 SESSION_ID="e2e-facts-$STAMP"
 ok "ephemeral client+workflow created (recipe: Photo triage)"
 
+# Self-cleanup (polish 6): delete every probe client by the test's name
+# prefix with the service_role key — runs in the EXIT trap even on failure,
+# needs no admin session, and finishes with a zero-rows assertion.
+TEST_PREFIX="__livefacts_e2e_"
 cleanup() {
-  curl -sS --max-time 60 -b "$JAR" -X DELETE "$BASE/admin-api/clients/$CLIENT_ID" \
-    -H "apikey: $APIKEY" >/dev/null || true
-  curl -sS --max-time 60 -X DELETE "${SUPABASE_URL%/}/rest/v1/clients?id=eq.$CLIENT_ID" \
-    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-    >/dev/null || true
+  curl -sS --max-time 60 -X DELETE "${SUPABASE_URL%/}/rest/v1/clients?name=like.${TEST_PREFIX}*" \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" \
+    >/dev/null 2>&1 || true
+  LEFT="$(curl -sS --max-time 60 -G "${SUPABASE_URL%/}/rest/v1/clients" \
+    --data-urlencode "name=like.${TEST_PREFIX}*" -d 'select=name' \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" 2>/dev/null || echo '[]')"
+  if [ "$(echo "$LEFT" | jq 'length' 2>/dev/null || echo 1)" -ne 0 ]; then
+    echo "CLEANUP INCOMPLETE: rows still matching ${TEST_PREFIX}: $LEFT" >&2
+    return 1
+  fi
+  echo "cleanup verified: zero rows matching ${TEST_PREFIX}"
+  return 0
 }
-trap 'rm -f "$JAR"; cleanup' EXIT
+trap 'rm -f "$JAR" "$DIGEST_FILE" 2>/dev/null; cleanup' EXIT
 
 DIGEST_FILE="$(mktemp)"
-trap 'rm -f "$JAR" "$DIGEST_FILE"; cleanup' EXIT
 
 # send_beat INDEX "text" — one final segment through the pipeline
 send_beat() {
@@ -193,6 +202,10 @@ case "$GATEWAY_CODE" in
   2*) fail "client session reached live-facts (HTTP $GATEWAY_CODE)" ;;
 esac
 ok "isolation: client session cannot reach the fact pipeline (HTTP $GATEWAY_CODE; DB-level zero-row reads for transcript_facts asserted in isolation_test.sql)"
+
+# --- 11. Self-cleanup + zero-rows assertion (polish 6; also runs in the trap) -
+cleanup || fail "cleanup left rows matching ${TEST_PREFIX} in the live database"
+ok "cleanup left zero rows matching ${TEST_PREFIX}"
 
 echo
 echo "LIVE-FACTS E2E: PASS ($PASS assertions)"

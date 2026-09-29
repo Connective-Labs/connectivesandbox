@@ -70,15 +70,23 @@ PUT="$(curl -sS --max-time 60 -b "$JAR" -X PUT "$BASE/admin-api/workflows/$WORKF
 echo "$PUT" | jq -e '.workflow != null' >/dev/null || fail "spec PUT failed: $PUT"
 ok "ephemeral clients+workflow created, spec loaded"
 
+# Self-cleanup (polish 6): delete by the test's name prefix with the
+# service_role key — runs in the EXIT trap even on failure, no admin session
+# needed — then assert zero rows remain matching the prefix.
+TEST_PREFIX="__fb_e2e_"
 cleanup() {
-  for id in "$CLIENT_ID" "$CLIENT_B_ID"; do
-    [ -n "$id" ] || continue
-    curl -sS --max-time 60 -b "$JAR" -X DELETE "$BASE/admin-api/clients/$id" \
-      -H "apikey: $APIKEY" >/dev/null 2>&1 || true
-    curl -sS --max-time 60 -X DELETE "${SUPABASE_URL%/}/rest/v1/clients?id=eq.$id" \
-      -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" \
-      >/dev/null 2>&1 || true
-  done
+  curl -sS --max-time 60 -X DELETE "${SUPABASE_URL%/}/rest/v1/clients?name=like.${TEST_PREFIX}*" \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" \
+    >/dev/null 2>&1 || true
+  LEFT="$(curl -sS --max-time 60 -G "${SUPABASE_URL%/}/rest/v1/clients" \
+    --data-urlencode "name=like.${TEST_PREFIX}*" -d 'select=name' \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" 2>/dev/null || echo '[]')"
+  if [ "$(echo "$LEFT" | jq 'length' 2>/dev/null || echo 1)" -ne 0 ]; then
+    echo "CLEANUP INCOMPLETE: rows still matching ${TEST_PREFIX}: $LEFT" >&2
+    return 1
+  fi
+  echo "cleanup verified: zero rows matching ${TEST_PREFIX}"
+  return 0
 }
 
 # --- 3. Client session -------------------------------------------------------
@@ -217,12 +225,16 @@ else
   ok "discard path: no unpublished draft left to discard (all consumed by publish)"
 fi
 
-# --- 10. Gateway isolation between clients ------------------------------------
+# --- 11. Gateway isolation between clients ------------------------------------
 BMINT="$(curl -sS --max-time 60 -c "$BJAR" -X POST "$BASE/auth-code" -H "apikey: $APIKEY" -H 'Content-Type: application/json' -d "{\"role\":\"client\",\"client_id\":\"$CLIENT_B_ID\"}")"
 echo "$BMINT" | jq -e '.role == "client"' >/dev/null || fail "client B session not minted: $BMINT"
 BVIEW="$(bget /feedback)"
 echo "$BVIEW" | jq -e '[.messages[] | select(.client_id != '"\"$CLIENT_B_ID\""')] | length == 0' >/dev/null \
   || fail "client B can read client A's feedback thread: $BVIEW"
 ok "gateway isolation: client B sees zero of client A's feedback rows"
+
+# --- 11. Self-cleanup + zero-rows assertion (polish 6; also runs in the trap) -
+cleanup || fail "cleanup left rows matching ${TEST_PREFIX} in the live database"
+ok "cleanup left zero rows matching ${TEST_PREFIX}"
 
 echo "FEEDBACK E2E: PASS ($PASS checks)"

@@ -43,10 +43,24 @@ cpost() {
 }
 
 CLIENT_ID=""
+# Self-cleanup (polish 6): EVERY probe row this script creates is deleted
+# here — runs in the EXIT trap even on failure, and needs no admin session
+# because it deletes by the test's name prefix with the service_role key.
+# Finishes with a zero-rows assertion on the same prefix.
+TEST_PREFIX="__mod_e2e_"
 cleanup() {
-  [ -n "$CLIENT_ID" ] || return 0
-  curl -sS --max-time 60 -b "$JAR" -X DELETE "$BASE/admin-api/clients/$CLIENT_ID" \
-    -H "apikey: $APIKEY" >/dev/null 2>&1 || true
+  curl -sS --max-time 60 -X DELETE "${SUPABASE_URL%/}/rest/v1/clients?name=like.${TEST_PREFIX}*" \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" \
+    >/dev/null 2>&1 || true
+  LEFT="$(curl -sS --max-time 60 -G "${SUPABASE_URL%/}/rest/v1/clients" \
+    --data-urlencode "name=like.${TEST_PREFIX}*" -d 'select=name' \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_ANON_KEY" 2>/dev/null || echo '[]')"
+  if [ "$(echo "$LEFT" | jq 'length' 2>/dev/null || echo 1)" -ne 0 ]; then
+    echo "CLEANUP INCOMPLETE: rows still matching ${TEST_PREFIX}: $LEFT" >&2
+    return 1
+  fi
+  echo "cleanup verified: zero rows matching ${TEST_PREFIX}"
+  return 0
 }
 
 # --- Shared round trip: publish a spec, run it as the client, verify ledger --
@@ -150,7 +164,10 @@ echo "$OPS_SPEC" | jq -e --arg v "$STAGE_ANSWER" '[.dashboard.panels[] | select(
   || fail "Operations desk: stage answer '$STAGE_ANSWER' not a pipeline stage"
 ok "Operations desk: pipeline_tracker resolves current stage '$STAGE_ANSWER' from the ledger"
 
-# --- 4. Ledger rows are durable (decisions table, via admin gateway) ---------
+# --- 4. Self-cleanup + zero-rows assertion (polish 6) ------------------------
+cleanup || fail "cleanup left rows matching ${TEST_PREFIX} in the live database"
+ok "cleanup left zero rows matching ${TEST_PREFIX}"
+
 SESSIONS="$(curl -sS --max-time 60 -b "$JAR" "$BASE/admin-api/workflows" -H "apikey: $APIKEY")"
 echo "$SESSIONS" | jq -e '.workflows != null' >/dev/null || true # listing shape varies; durability asserted by the ledger response
 
