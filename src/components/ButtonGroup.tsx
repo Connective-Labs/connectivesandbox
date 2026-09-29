@@ -8,6 +8,7 @@ import type { IntakeComponent } from '@/engine/types'
 import type { IntakeComponentViewProps } from '@/engine/registry'
 import { cn } from '@/lib/utils'
 import { Card, Eyebrow } from '@/components/ui/Primitives'
+import SpecText from '@/components/SpecText'
 import { useWorkspace } from '@/state/workspace'
 
 export type ButtonGroupComponent = Extract<IntakeComponent, { type: 'button_group' }>
@@ -40,7 +41,7 @@ function ButtonGroupPanel({ component }: { component: ButtonGroupComponent }) {
     <Card className="space-y-4">
       <div>
         <Eyebrow>Select</Eyebrow>
-        <h3 className="mt-1 font-semibold tracking-tight text-ink">{component.label}</h3>
+        <h3 className="mt-1 font-semibold tracking-tight text-ink"><SpecText value={component.label} /></h3>
       </div>
       <div
         role="group"
@@ -118,7 +119,7 @@ function ButtonGroupInline({
 
   return (
     <div className="max-w-[85%] rounded-lg rounded-tl-none border border-slate-100 bg-white p-3 text-sm shadow-sm">
-      <p className="font-semibold tracking-tight text-ink">{component.label}</p>
+      <p className="font-semibold tracking-tight text-ink"><SpecText value={component.label} /></p>
       <div
         role="group"
         aria-label={component.label}

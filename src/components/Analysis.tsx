@@ -7,6 +7,7 @@ import { useState } from 'react'
 import type { DashboardPanel } from '@/engine/types'
 import { formatAnswerValue, formatPercent } from '@/lib/format'
 import { Skeleton } from '@/components/ui/Primitives'
+import SpecText from '@/components/SpecText'
 import { useWorkspace } from '@/state/workspace'
 
 export type AnalysisPanel = Extract<DashboardPanel, { type: 'analysis' }>
@@ -32,7 +33,7 @@ export default function Analysis({ panel }: { panel: AnalysisPanel }) {
   if (panel.source === 'llm' && analysis !== null && analysis.length > 0) {
     return (
       <div className="space-y-2">
-        <h3 className="font-semibold tracking-tight text-ink">{panel.title}</h3>
+        <h3 className="font-semibold tracking-tight text-ink"><SpecText value={panel.title} /></h3>
         <p className="text-sm leading-relaxed text-slate-600">{analysis}</p>
       </div>
     )
@@ -41,7 +42,7 @@ export default function Analysis({ panel }: { panel: AnalysisPanel }) {
   if (results.length === 0) {
     return (
       <div className="space-y-2">
-        <h3 className="font-semibold tracking-tight text-ink">{panel.title}</h3>
+        <h3 className="font-semibold tracking-tight text-ink"><SpecText value={panel.title} /></h3>
         <p className="text-sm text-slate-400">Run the workflow to generate analysis.</p>
       </div>
     )
@@ -60,7 +61,7 @@ export default function Analysis({ panel }: { panel: AnalysisPanel }) {
 
   return (
     <div className="space-y-2">
-      <h3 className="font-semibold tracking-tight text-ink">{panel.title}</h3>
+      <h3 className="font-semibold tracking-tight text-ink"><SpecText value={panel.title} /></h3>
       <div className="space-y-2 text-sm leading-relaxed text-slate-600">
         <p>
           {spec.judges.length} question{spec.judges.length === 1 ? '' : 's'}, {results.length} decision

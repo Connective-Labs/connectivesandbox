@@ -9,6 +9,7 @@ import { Loader2, Send } from 'lucide-react'
 import type { IntakeComponent } from '@/engine/types'
 import type { IntakeComponentViewProps } from '@/engine/registry'
 import { Card, Eyebrow } from '@/components/ui/Primitives'
+import SpecText from '@/components/SpecText'
 import { useWorkspace } from '@/state/workspace'
 
 export type FormComponent = Extract<IntakeComponent, { type: 'form' }>
@@ -50,7 +51,7 @@ function FormFields({
             htmlFor={`field-${component.id}-${field.id}`}
             className="mb-1 block text-xs font-medium text-slate-600"
           >
-            {field.label}
+            <SpecText value={field.label} />
             {field.required === true && (
               <span aria-hidden="true" className="ml-0.5 text-accent">
                 *

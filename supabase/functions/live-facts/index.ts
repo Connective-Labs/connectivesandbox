@@ -34,19 +34,30 @@
 //   6. fold classified ops against the replayed ledger — semantic idempotency:
 //      add-on-active demotes to confirm, remove-on-inactive is dropped,
 //      confirm-on-inactive promotes to add
-//   7. GLM string pass for NEWLY created elements only (one call, silent
-//      failure — catalogue placeholders keep validity)
-//   8. append fact rows; if the ledger signature changed and the draft
-//      cooldown passed: compile → validate → new spec_drafts version
-//   9. respond with the appended ops, the replayed ledger, the signature, and
-//      the draft (if any)
+//   7. append fact rows; if the ledger signature changed and the draft
+//      cooldown passed (~4s — polish 6, was 10s): compile → validate → new
+//      spec_drafts version. RENDER-FIRST: the draft carries catalogue
+//      placeholders; GLM strings are NOT awaited here.
+//   8. respond with the appended ops, the replayed ledger, the signature, and
+//      the draft (if any) flagged strings_pending when placeholders remain
+//
+// STRINGS IN PARALLEL (polish 6): the client renders the skeleton draft
+// immediately, then calls this function with { fill_strings: true }. That
+// second request runs the ONE GLM string pass for newly created elements
+// (silent failure — catalogue placeholders keep validity), persists the
+// strings onto the fact rows, and returns the recompiled spec. The preview
+// fades each string in as it lands; structure is never blocked on copy.
+
+//   POST   /live-facts  { client_id, workflow_id?, session_id, recipe_id?,
+//                         new_segments?, rolling_tail?, transcript_digest?,
+//                         compile_signature? | fill_strings?: true }
 //
 // No audio ever reaches this function — text segments only. No secret ever
 // leaves the server. Judges never return free text into the UI.
 
 import { handleOptions, jsonResponse } from '../_shared/cors.ts'
 import { readSession } from '../_shared/jwt.ts'
-import { restInsert, restSelect } from '../_shared/rest.ts'
+import { restInsert, restSelect, restUpdate } from '../_shared/rest.ts'
 import { glmChat } from '../_shared/glm.ts'
 
 import { safeParseWorkflowSpec } from '../../../src/engine/schema.ts'
@@ -84,8 +95,15 @@ function envNumber(name: string, fallback: number): number {
 }
 const SCREEN_COOLDOWN_SECONDS = envNumber('SCREEN_COOLDOWN_SECONDS', 5)
 const EXTRACT_COOLDOWN_SECONDS = envNumber('EXTRACT_COOLDOWN_SECONDS', 8)
-const DRAFT_COOLDOWN_SECONDS = envNumber('DRAFT_COOLDOWN_SECONDS', 10)
+// Polish 6: compile floor 3–4s so the skeleton renders while the transcript
+// is producing facts. The invocation budget stays bounded: stage 1 stays on
+// the ~5s screen cadence and stage 2 on the ~8s extract cadence.
+const DRAFT_COOLDOWN_SECONDS = envNumber('DRAFT_COOLDOWN_SECONDS', 4)
 const MAX_FACTS_PER_SESSION = envNumber('MAX_FACTS_PER_SESSION', 300)
+/** Best-effort in-memory guard so a misbehaving client cannot spam the GLM
+ *  string pass (durable bounding comes from the draft cadence itself). */
+const lastFillAt = new Map<string, number>()
+const FILL_MIN_GAP_MS = 4000
 
 // ---------------------------------------------------------------------------
 // Wire helpers (openjev contract — see src/services/judge/jev.ts)
@@ -138,6 +156,7 @@ async function jevCall(
 // ---------------------------------------------------------------------------
 
 interface FactRow {
+  id: string
   key: string
   op: string
   area: string
@@ -165,7 +184,7 @@ async function loadLedgerFacts(clientId: string, sessionId: string): Promise<Led
   const rows = await restSelect<FactRow>('transcript_facts', {
     client_id: `eq.${clientId}`,
     session_id: `eq.${sessionId}`,
-    select: 'key,op,area,detail,transcript_ref,created_at',
+    select: 'id,key,op,area,detail,transcript_ref,created_at',
     order: 'created_at.asc,id.asc',
   })
   return rows.map(rowToFact).filter((fact): fact is LedgerFact => fact !== null)
@@ -483,23 +502,36 @@ const DEFAULT_SLOT_LIMIT = 160
  * retries on missing slots). One GLM call; any failure leaves catalogue
  * placeholders in place — validity never depends on GLM.
  */
-async function fillStrings(
-  plans: AppendPlan[],
-  stateBefore: FactLedgerState,
-  transcriptTail: string[],
-): Promise<void> {
-  const wanted = plans.filter((plan) => plan.op !== 'remove' && DEFAULT_STRINGS[plan.key] !== undefined)
-  if (wanted.length === 0) return
-  const slots: { plan: AppendPlan; slot: string; fallback: string; path: string }[] = []
-  for (const plan of wanted) {
-    for (const [slot, fallback] of Object.entries(DEFAULT_STRINGS[plan.key])) {
-      const existing = stateBefore.get(plan.key)?.detail.strings?.[slot as keyof FactStrings]
-      if (typeof existing === 'string' && existing.trim().length > 0) continue // never rewrite cached copy
-      slots.push({ plan, slot, fallback, path: `${plan.key}::${slot}` })
+
+interface PendingSlot {
+  key: string
+  slot: string
+  fallback: string
+  path: string
+}
+
+/** String slots still holding catalogue placeholders on ACTIVE ledger keys. */
+function pendingSlots(state: FactLedgerState): PendingSlot[] {
+  const slots: PendingSlot[] = []
+  for (const entry of state.values()) {
+    if (!entry.active) continue
+    const defaults = DEFAULT_STRINGS[entry.key]
+    if (defaults === undefined) continue
+    for (const [slot, fallback] of Object.entries(defaults)) {
+      const existing = entry.detail.strings?.[slot as keyof FactStrings]
+      if (typeof existing === 'string' && existing.trim().length > 0) continue
+      slots.push({ key: entry.key, slot, fallback, path: `${entry.key}::${slot}` })
     }
   }
-  if (slots.length === 0) return
+  return slots
+}
 
+function hasPendingStrings(state: FactLedgerState): boolean {
+  return pendingSlots(state).length > 0
+}
+
+/** One GLM call filling the offered slots; any failure yields {} (silent). */
+async function requestStrings(slots: PendingSlot[], transcriptTail: string[]): Promise<Record<string, string>> {
   const offered = slots.map((entry) => `"${entry.path}": "${entry.fallback.replace(/"/g, '\\"')}"`).join(',\n')
   const messages = [
     {
@@ -517,23 +549,108 @@ async function fillStrings(
       ].join('\n\n'),
     },
   ]
+  const filled: Record<string, string> = {}
   try {
     const content = await glmChat(messages, { maxTokens: 2048, reasoningEffort: 'low' })
     const map = extractJsonMap(content)
-    if (map === null) return
+    if (map === null) return filled
     for (const entry of slots) {
       const value = map[entry.path]
       if (typeof value !== 'string') continue
       const trimmed = value.trim()
       const limit = SLOT_LIMITS[entry.slot] ?? DEFAULT_SLOT_LIMIT
       if (trimmed.length === 0 || trimmed.length > limit) continue // silent failure: keep placeholder
-      entry.plan.detail = {
-        ...entry.plan.detail,
-        strings: { ...entry.plan.detail.strings, [entry.slot]: trimmed },
-      }
+      filled[entry.path] = trimmed
     }
   } catch (error) {
     console.log(`[live-facts] GLM string pass skipped: ${(error as Error).message}`)
+  }
+  return filled
+}
+
+/**
+ * The fill_strings POST mode (polish 6): the client renders the skeleton
+ * draft first, then asks for the wording. One GLM call; strings persist onto
+ * the fact rows (so every future compile carries them), the current draft's
+ * spec is recompiled and updated in place, and the response returns the new
+ * spec so the preview can fade each string in as it arrives.
+ */
+async function handleFillStrings(
+  clientId: string,
+  sessionId: string,
+  workflowId: string | null,
+  recipeId: RecipeId,
+): Promise<Record<string, unknown>> {
+  const last = lastFillAt.get(sessionId) ?? 0
+  if (Date.now() - last < FILL_MIN_GAP_MS) {
+    return { filled: [], throttled: true }
+  }
+  lastFillAt.set(sessionId, Date.now())
+
+  const facts = await loadLedgerFacts(clientId, sessionId)
+  const state = applyFacts(facts)
+  const slots = pendingSlots(state)
+  if (slots.length === 0) return { filled: [] }
+
+  const filled = await requestStrings(slots, [])
+  const paths = Object.keys(filled)
+  if (paths.length === 0) return { filled: [] }
+
+  // Persist onto the LATEST non-remove fact row per key (the row whose detail
+  // wins the replay), so the strings cache on the ledger like before.
+  const rows = await restSelect<FactRow>('transcript_facts', {
+    client_id: `eq.${clientId}`,
+    session_id: `eq.${sessionId}`,
+    select: 'id,key,op,area,detail,transcript_ref,created_at',
+    order: 'created_at.desc,id.desc',
+  })
+  const latestRowForKey = new Map<string, FactRow>()
+  for (const row of rows) {
+    if (row.op === 'remove') continue
+    if (!latestRowForKey.has(row.key)) latestRowForKey.set(row.key, row)
+  }
+  const byKey = new Map<string, Record<string, string>>()
+  for (const path of paths) {
+    const [key, slot] = path.split('::')
+    if (key === undefined || slot === undefined) continue
+    byKey.set(key, { ...byKey.get(key), [slot]: filled[path] })
+  }
+  for (const [key, strings] of byKey) {
+    const row = latestRowForKey.get(key)
+    if (row === undefined) continue
+    const detail: FactDetail = {
+      ...row.detail,
+      strings: { ...row.detail.strings, ...strings },
+    }
+    await restUpdate('transcript_facts', { id: `eq.${row.id}` }, { detail })
+  }
+
+  // Recompile with the cached strings and refresh the newest transcript draft
+  // for this session in place (same id, same version — the preview diffs the
+  // strings by element id and fades them in).
+  const stateAfter = applyFacts(await loadLedgerFacts(clientId, sessionId))
+  const compiled = compileDraft(recipeId, stateAfter)
+  const draftRows = await restSelect<{ id: string; version: number; delta_summary: string }>('spec_drafts', {
+    client_id: `eq.${clientId}`,
+    session_id: `eq.${sessionId}`,
+    source: 'eq.transcript',
+    published: 'eq.false',
+    select: 'id,version,delta_summary',
+    order: 'version.desc',
+    limit: '1',
+  })
+  const draftRow = draftRows[0]
+  if (draftRow === undefined) return { filled: paths }
+  await restUpdate('spec_drafts', { id: `eq.${draftRow.id}` }, { spec: compiled.spec })
+  console.log(`[live-facts] string pass filled ${paths.length} slot(s) for session ${sessionId} (workflow ${workflowId ?? 'none'})`)
+  return {
+    filled: paths,
+    draft: {
+      id: draftRow.id,
+      version: draftRow.version,
+      spec: compiled.spec,
+      delta_summary: draftRow.delta_summary,
+    },
   }
 }
 
@@ -646,6 +763,8 @@ interface LiveFactsBody {
   rolling_tail?: string
   transcript_digest?: string
   compile_signature?: string
+  /** Polish 6: run the parallel GLM string pass (no jev, no structure). */
+  fill_strings?: boolean
 }
 
 function segmentTexts(segments: SegmentInput[] | undefined): string[] {
@@ -699,6 +818,9 @@ async function maybeDraft(input: {
       version: inserted[0]?.version ?? version,
       spec: compiled.spec,
       delta_summary: input.summary,
+      // Render-first: placeholders render now; the client asks for wording
+      // via the fill_strings mode and fades the strings in as they land.
+      strings_pending: hasPendingStrings(input.state),
     },
     suppressed: false,
     baseline: compiled.baseline,
@@ -767,6 +889,16 @@ Deno.serve(async (request) => {
         limit: '1',
       })
       if (rows.length > 0) recipeId = recipeFromName(rows[0].name)
+    }
+
+    // ---------------------------------------------------------------
+    // fill_strings mode (polish 6): the parallel string pass. No jev
+    // spend, no structure change — GLM fills pending slots, the strings
+    // cache onto the fact rows, and the newest draft's spec is updated.
+    // ---------------------------------------------------------------
+    if (body.fill_strings === true) {
+      const result = await handleFillStrings(clientId, sessionId, workflowId, recipeId)
+      return jsonResponse(request, result)
     }
 
     const segments = segmentTexts(body.new_segments)
@@ -899,10 +1031,9 @@ Deno.serve(async (request) => {
       })
     }
 
-    // 6. GLM strings for newly created elements only (silent failure OK).
-    await fillStrings(plans, stateBefore, [...segments, rollingTail].filter((text) => text.length > 0))
-
-    // 7. Append durable rows (cap enforced).
+    // 6. Append durable rows (cap enforced). RENDER-FIRST: no GLM string
+    //    pass here — catalogue placeholders compile immediately and the
+    //    client fetches wording via fill_strings in parallel.
     const room = Math.max(0, MAX_FACTS_PER_SESSION - facts.length)
     const capped = plans.length > room
     plans = plans.slice(0, room)
@@ -919,7 +1050,7 @@ Deno.serve(async (request) => {
       })))
     }
 
-    // 8. Replay with the appended facts; compile if the ledger moved.
+    // 7. Replay with the appended facts; compile if the ledger moved.
     const stateAfter = applyFacts([...facts, ...plans.map((plan) => ({
       key: plan.key,
       op: plan.op,

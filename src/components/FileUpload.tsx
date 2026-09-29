@@ -15,6 +15,7 @@ import type { IntakeComponentViewProps } from '@/engine/registry'
 import { formatBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Card, Eyebrow } from '@/components/ui/Primitives'
+import SpecText from '@/components/SpecText'
 import { useWorkspace } from '@/state/workspace'
 
 function matchesAccept(file: File, accept: string[]): boolean {
@@ -114,7 +115,7 @@ function FileUploadPanel({ component }: { component: FileUploadComponent }) {
     <Card className="space-y-4">
       <div>
         <Eyebrow>Upload</Eyebrow>
-        <h3 className="mt-1 font-semibold tracking-tight text-ink">{component.label}</h3>
+        <h3 className="mt-1 font-semibold tracking-tight text-ink"><SpecText value={component.label} /></h3>
       </div>
 
       {files.length === 0 ? (
@@ -173,7 +174,7 @@ function FileUploadPanel({ component }: { component: FileUploadComponent }) {
         />
       </div>
 
-      <p className="text-sm leading-relaxed text-slate-600">{component.instructions}</p>
+      <p className="text-sm leading-relaxed text-slate-600"><SpecText value={component.instructions} /></p>
     </Card>
   )
 }
@@ -203,8 +204,8 @@ function FileUploadInline({
 
   return (
     <div className="max-w-[85%] rounded-lg rounded-tl-none border border-slate-100 bg-white p-3 text-sm shadow-sm">
-      <p className="font-semibold tracking-tight text-ink">{component.label}</p>
-      <p className="mt-1 text-xs leading-relaxed text-slate-500">{component.instructions}</p>
+      <p className="font-semibold tracking-tight text-ink"><SpecText value={component.label} /></p>
+      <p className="mt-1 text-xs leading-relaxed text-slate-500"><SpecText value={component.instructions} /></p>
       <div className="mt-2.5 flex items-center gap-2">
         <button
           type="button"

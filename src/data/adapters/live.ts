@@ -55,6 +55,9 @@ export interface LiveFactsDraft {
   version: number
   spec: WorkflowSpec
   delta_summary: string
+  /** Polish 6 render-first: true when catalogue placeholders remain and the
+   *  parallel fill_strings pass should be requested. */
+  strings_pending?: boolean
 }
 
 export interface LiveFactsResult {
@@ -87,7 +90,7 @@ export interface SendLiveFactsPayload {
   /** Rolling digest of the call so far (oldest → newest, capped client-side). */
   transcript_digest?: string
   /** Flush mode: compile the current ledger when it drifted from this
-   *  signature (no jev spend; the ~10s draft floor holds). */
+   *  signature (no jev spend; the ~4s draft floor holds). */
   compile_signature?: string
 }
 
@@ -96,6 +99,30 @@ export async function sendLiveFacts(payload: SendLiveFactsPayload): Promise<Live
   const response = await callFunction<LiveFactsResult>('/live-facts', {
     method: 'POST',
     body: payload,
+  })
+  assertOk(response as unknown as FunctionResponse<{ error?: string }>)
+  return response.data
+}
+
+// ---------------------------------------------------------------------------
+// Parallel string pass (polish 6 — render-first)
+// ---------------------------------------------------------------------------
+
+export interface FillStringsResult {
+  filled?: string[]
+  throttled?: boolean
+  draft?: LiveFactsDraft
+}
+
+/**
+ * Ask the server to run the GLM string pass for placeholder slots. The
+ * skeleton draft is already on screen; the returned spec carries the landed
+ * strings, which the preview fades in place by element id.
+ */
+export async function fillLiveStrings(clientId: string, sessionId: string): Promise<FillStringsResult> {
+  const response = await callFunction<FillStringsResult>('/live-facts', {
+    method: 'POST',
+    body: { client_id: clientId, session_id: sessionId, fill_strings: true },
   })
   assertOk(response as unknown as FunctionResponse<{ error?: string }>)
   return response.data

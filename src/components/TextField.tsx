@@ -8,6 +8,7 @@ import { Send } from 'lucide-react'
 import type { IntakeComponent } from '@/engine/types'
 import type { IntakeComponentViewProps } from '@/engine/registry'
 import { Card, Eyebrow } from '@/components/ui/Primitives'
+import SpecText from '@/components/SpecText'
 import { useWorkspace } from '@/state/workspace'
 
 export type TextFieldComponent = Extract<IntakeComponent, { type: 'text_field' }>
@@ -22,7 +23,7 @@ function TextFieldPanel({ component }: { component: TextFieldComponent }) {
     <Card className="space-y-4">
       <div>
         <Eyebrow>Input</Eyebrow>
-        <h3 className="mt-1 font-semibold tracking-tight text-ink">{component.label}</h3>
+        <h3 className="mt-1 font-semibold tracking-tight text-ink"><SpecText value={component.label} /></h3>
       </div>
       {component.multiline ? (
         <textarea
@@ -68,7 +69,7 @@ function TextFieldInline({
 
   return (
     <div className="max-w-[85%] rounded-lg rounded-tl-none border border-slate-100 bg-white p-3 text-sm shadow-sm">
-      <p className="font-semibold tracking-tight text-ink">{component.label}</p>
+      <p className="font-semibold tracking-tight text-ink"><SpecText value={component.label} /></p>
       <div className="mt-2 flex items-end gap-2">
         {component.multiline ? (
           <textarea

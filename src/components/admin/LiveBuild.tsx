@@ -19,9 +19,10 @@
 // audio is stored anywhere — only final text segments persist.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { Disc, Mic, Square, X } from 'lucide-react'
 
-import { Badge, Eyebrow } from '@/components/ui/Primitives'
+import { Badge, Eyebrow, Skeleton, useGraceSkeleton } from '@/components/ui/Primitives'
 import { cn } from '@/lib/utils'
 import type { WorkflowSpec } from '@/engine/types'
 import {
@@ -35,6 +36,7 @@ import {
 } from '@/data/adapters/transcribe'
 import {
   discardDraft,
+  fillLiveStrings,
   listSpecDrafts,
   markDraftPublished,
   sendLiveFacts,
@@ -44,8 +46,9 @@ import {
 
 /** Rolling screen cadence — jev reads the transcript every ~5 seconds. */
 const SCREEN_TICK_MS = 5000
-/** Draft compile floor (~10s) honoured client-side before a flush compile. */
-const FLUSH_DELAY_MS = 10_000
+/** Draft compile floor (polish 6: ~4s) honoured client-side before a flush
+ *  compile — the skeleton renders while the transcript produces facts. */
+const FLUSH_DELAY_MS = 4000
 const MAX_CAPTIONS = 200
 const FACT_AREA_STYLES: Record<string, string> = {
   intake: 'bg-sky-50 text-sky-700 border-sky-200',
@@ -82,6 +85,10 @@ export function LiveBuild({
   const [recording, setRecording] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [drafts, setDrafts] = useState<SpecDraft[]>([])
+  // Skeleton discipline (polish 6): the draft rail holds its skeleton for the
+  // minimum dwell so a fast load never flashes.
+  const [draftsLoaded, setDraftsLoaded] = useState(false)
+  const draftsLoading = useGraceSkeleton(!draftsLoaded)
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null)
   const [confirmingDiscardId, setConfirmingDiscardId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -101,6 +108,7 @@ export function LiveBuild({
   const postStopTimersRef = useRef<number[]>([])
   const recordingGenerationRef = useRef(0)
   const sendingRef = useRef(false)
+  const fillPendingRef = useRef(false)
   const storedSpecRef = useRef(storedSpec)
   const captionsRef = useRef<HTMLDivElement | null>(null)
   const stateRef = useRef({ clientId, workflowId })
@@ -132,13 +140,16 @@ export function LiveBuild({
         : `call-${Date.now()}`
     setActiveDraftId(null)
     onActiveDraftChange(null)
+    setDraftsLoaded(false)
     if (workflowId !== null) {
       void listSpecDrafts(workflowId).then((rows) => {
         setDrafts(rows)
         setActiveDraftId(rows[0]?.id ?? null)
+        setDraftsLoaded(true)
       })
     } else {
       setDrafts([])
+      setDraftsLoaded(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowId])
@@ -184,6 +195,29 @@ export function LiveBuild({
       flushTimerRef.current = null
       void sendTick()
     }, FLUSH_DELAY_MS)
+  }
+
+  // Strings in parallel (polish 6): the skeleton draft is already on screen
+  // with catalogue placeholders; ask the server for the GLM wording without
+  // blocking anything. The returned spec lands via acceptDraft (same draft
+  // id) and the preview fades each string in place. Silent failure is fine —
+  // the next draft retries.
+  const requestStringsFill = async () => {
+    if (fillPendingRef.current) return
+    const clientIdValue = stateRef.current.clientId
+    if (clientIdValue === null) return
+    fillPendingRef.current = true
+    try {
+      const result = await fillLiveStrings(clientIdValue, sessionIdRef.current)
+      if (result.draft !== undefined) {
+        acceptDraft(result.draft, clientIdValue)
+        setNotice(`Draft v${result.draft.version} — wording filled in`)
+      }
+    } catch {
+      // Placeholders stay; the next drafted version retries the fill.
+    } finally {
+      fillPendingRef.current = false
+    }
   }
 
   const sendTick = async () => {
@@ -237,8 +271,11 @@ export function LiveBuild({
       }
       if (result.changed && result.draft !== undefined) {
         acceptDraft(result.draft, clientIdValue)
+        if (result.draft.strings_pending === true) {
+          window.setTimeout(() => void requestStringsFill(), 300)
+        }
       } else if (result.changed && result.draft_suppressed === true && result.signature !== undefined) {
-        // The ledger moved but the ~10s compile floor holds — flush once the
+        // The ledger moved but the ~4s compile floor holds — flush once the
         // floor lifts so the final state always becomes a draft.
         scheduleFlush(result.signature)
         setNotice('Change noted — compiling after the draft floor.')
@@ -504,16 +541,19 @@ export function LiveBuild({
           </div>
           <ul className="scroll-slim mt-1.5 flex max-h-16 flex-wrap gap-1.5 overflow-y-auto">
             {activeFacts.map((entry) => (
-              <li
+              <motion.li
                 key={entry.key}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className={cn(
-                  'animate-word-in rounded-full border px-2 py-0.5 font-mono text-[11px]',
+                  'rounded-full border px-2 py-0.5 font-mono text-[11px]',
                   FACT_AREA_STYLES[entry.area] ?? 'border-slate-200 bg-slate-50 text-slate-600',
                 )}
                 title={`${entry.area} · last op ${entry.op} · applied ${entry.ops}×`}
               >
                 {entry.key}
-              </li>
+              </motion.li>
             ))}
           </ul>
         </div>
@@ -525,15 +565,23 @@ export function LiveBuild({
           <Eyebrow>Spec drafts</Eyebrow>
           {drafts.length > 0 && <span className="text-xs text-slate-400">{drafts.length} total</span>}
         </div>
-        {drafts.length === 0 ? (
+        {draftsLoading ? (
+          <div className="mt-2 space-y-1" aria-hidden="true">
+            <Skeleton className="h-8 w-full rounded-lg" />
+            <Skeleton className="h-8 w-full rounded-lg" />
+          </div>
+        ) : drafts.length === 0 ? (
           <p className="mt-2 text-xs text-slate-400">
             Numbered drafts appear here as the fact ledger changes. Publish stays on the right.
           </p>
         ) : (
           <ul className="scroll-slim mt-2 max-h-36 space-y-1 overflow-y-auto pr-1">
             {drafts.map((draft) => (
-              <li
+              <motion.li
                 key={draft.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
                 className={cn(
                   'group flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors',
                   draft.id === activeDraftId
@@ -597,7 +645,7 @@ export function LiveBuild({
                     </button>
                   </>
                 )}
-              </li>
+              </motion.li>
             ))}
           </ul>
         )}
