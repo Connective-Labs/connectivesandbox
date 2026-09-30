@@ -20,8 +20,13 @@
 //   GET    /workflows/:id               summary + spec (client: own only)
 //   POST   /workflows {client_id, name, spec?}
 //   PATCH  /workflows/:id {name?, description?}   also patches the stored spec
-//   PUT    /workflows/:id/spec {spec}             publish: bump version
+//   PUT    /workflows/:id/spec {spec}             publish: bump version + name-sync
 //   DELETE /workflows/:id
+//   GET    /templates                   library list (curated seeds self-heal)
+//   GET    /templates/:id               full template (spec + slots)
+//   POST   /templates {workflow_id, name?, as_version_of?}   save-as-template
+//   POST   /templates/:id/instantiate {target_client_id, name, description?, slot_values?}
+//   DELETE /templates/:id               library rows only (curated are protected)
 //   GET    /usage/totals                org-wide totals (derived from decisions)
 // Phase 6 additions (client sessions may read their own rows):
 //   GET    /sessions?workflow_id=&kind=         run/builder sessions (client: own)
@@ -31,6 +36,11 @@
 import { handleOptions, jsonResponse } from '../_shared/cors.ts'
 import { readSession } from '../_shared/jwt.ts'
 import { restDelete, restInsert, restSelect, restUpdate } from '../_shared/rest.ts'
+import { safeParseWorkflowSpec } from '../../../src/engine/schema.ts'
+import { compileSpec } from '../../../src/engine/compilers.ts'
+import { normaliseRecipeId, recipeFromName, RECIPES } from '../../../src/engine/catalogue.ts'
+import { applySlotValues, templateSlots, type TemplateSlot } from '../../../src/engine/templating.ts'
+import type { WorkflowSpec } from '../../../src/engine/types.ts'
 
 interface WorkflowRow {
   id: string
@@ -40,6 +50,66 @@ interface WorkflowRow {
   spec: Record<string, unknown>
   version: number
   updated_at: string
+}
+
+interface TemplateRow {
+  id: string
+  name: string
+  description: string | null
+  category: string
+  spec: Record<string, unknown>
+  version: number
+  slots: unknown
+  is_curated: boolean
+  parent_template_id: string | null
+  created_from_workflow_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+const CURATED_RECIPE_IDS = ['photo-triage', 'document-intake', 'approval-desk', 'operations-desk'] as const
+
+/**
+ * Idempotent seed: the curated recipe baselines always exist and match the
+ * catalogue. On a catalogue change the curated spec self-heals (version
+ * bumps, so instantiated workflows record which revision they came from).
+ */
+async function ensureCuratedTemplates(): Promise<void> {
+  const existing = await restSelect<{ id: string; category: string; version: number; spec: unknown }>('workflow_templates', {
+    is_curated: 'eq.true',
+    select: 'id,category,version,spec',
+  })
+  const byCategory = new Map(existing.map((row) => [row.category, row]))
+  for (const recipeId of CURATED_RECIPE_IDS) {
+    const recipe = RECIPES[recipeId]
+    const compiled = compileSpec(recipeId, new Map())
+    const parsed = safeParseWorkflowSpec(compiled)
+    if (!parsed.success) continue // catalogue bug: never seed a broken template
+    const slots = templateSlots(parsed.data)
+    const current = byCategory.get(recipeId)
+    if (current === undefined) {
+      await restInsert('workflow_templates', {
+        name: recipe.name,
+        description: recipe.description,
+        category: recipeId,
+        spec: parsed.data,
+        version: 1,
+        slots,
+        is_curated: true,
+      })
+      continue
+    }
+    if (JSON.stringify(current.spec) !== JSON.stringify(parsed.data)) {
+      await restUpdate('workflow_templates', { id: `eq.${current.id}` }, {
+        name: recipe.name,
+        description: recipe.description,
+        spec: parsed.data,
+        version: current.version + 1,
+        slots,
+        updated_at: new Date().toISOString(),
+      })
+    }
+  }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -246,6 +316,139 @@ Deno.serve(async (request) => {
       }
 
       return jsonResponse(request, { error: 'Unsupported workflow operation' }, 405)
+    }
+
+    // ------------------------------------------------------------------
+    // Templates (admin only) — the reusable workflow library. Curated
+    // recipe baselines self-seed from the catalogue and self-heal when it
+    // changes; saves from published workflows parameterise through
+    // src/engine/templating.ts. The frozen Zod schema gates every
+    // instantiation; the rep stays the UAT gate.
+    // ------------------------------------------------------------------
+    if (resource === 'templates') {
+      if (!isAdmin) return jsonResponse(request, { error: 'Forbidden' }, 403)
+
+      if (request.method === 'GET' && !id) {
+        await ensureCuratedTemplates()
+        const rows = await restSelect<TemplateRow>('workflow_templates', {
+          select: 'id,name,description,category,version,slots,is_curated,parent_template_id,created_from_workflow_id,created_at,updated_at',
+          order: 'is_curated.desc,updated_at.desc',
+        })
+        const usage = await restSelect<{ source_template_id: string }>('workflows', {
+          source_template_id: 'not.is.null',
+          select: 'source_template_id',
+        })
+        const counts: Record<string, number> = {}
+        for (const row of usage) counts[row.source_template_id] = (counts[row.source_template_id] ?? 0) + 1
+        return jsonResponse(request, {
+          templates: rows.map((row) => ({ ...row, usage_count: counts[row.id] ?? 0 })),
+        })
+      }
+
+      if (request.method === 'GET' && id && isUuid(id)) {
+        const rows = await restSelect<TemplateRow>('workflow_templates', {
+          id: `eq.${id}`,
+          select: 'id,name,description,category,spec,version,slots,is_curated,parent_template_id,created_from_workflow_id,created_at,updated_at',
+          limit: '1',
+        })
+        if (rows.length === 0) return jsonResponse(request, { error: 'Not found' }, 404)
+        return jsonResponse(request, { template: rows[0] })
+      }
+
+      if (request.method === 'POST' && !id) {
+        // Save-as-template: parameterise a published workflow's spec.
+        const body = await request.json()
+        const workflowId = typeof body?.workflow_id === 'string' ? body.workflow_id : ''
+        if (!isUuid(workflowId)) return jsonResponse(request, { error: 'workflow_id is required' }, 400)
+        const workflowRows = await restSelect<WorkflowRow>('workflows', {
+          id: `eq.${workflowId}`,
+          select: 'id,name,spec',
+          limit: '1',
+        })
+        if (workflowRows.length === 0) return jsonResponse(request, { error: 'Workflow not found' }, 404)
+        const source = workflowRows[0]
+        const parsed = safeParseWorkflowSpec(source.spec)
+        if (!parsed.success) return jsonResponse(request, { error: 'The workflow spec is invalid' }, 422)
+        const slots = templateSlots(parsed.data)
+        const inferred = normaliseRecipeId(recipeFromName(source.name))
+        const name = typeof body?.name === 'string' && body.name.trim().length > 0 ? body.name.trim() : `${source.name} template`
+        const asVersionOf = typeof body?.as_version_of === 'string' && isUuid(body.as_version_of) ? body.as_version_of : null
+        let version = 1
+        let parentTemplateId: string | null = null
+        if (asVersionOf !== null) {
+          const parentRows = await restSelect<{ id: string; version: number }>('workflow_templates', {
+            id: `eq.${asVersionOf}`,
+            select: 'id,version',
+            limit: '1',
+          })
+          if (parentRows.length === 0) return jsonResponse(request, { error: 'Parent template not found' }, 404)
+          version = parentRows[0].version + 1
+          parentTemplateId = parentRows[0].id
+        }
+        const created = await restInsert<Record<string, unknown>>('workflow_templates', {
+          name,
+          description: parsed.data.description,
+          category: inferred === 'generic' ? 'custom' : inferred,
+          spec: parsed.data,
+          version,
+          ...(parentTemplateId !== null ? { parent_template_id: parentTemplateId } : {}),
+          created_from_workflow_id: workflowId,
+          slots,
+          is_curated: false,
+        })
+        return jsonResponse(request, { template: created[0] }, 201)
+      }
+
+      if (request.method === 'POST' && id && isUuid(id) && sub === 'instantiate') {
+        const body = await request.json()
+        const targetClientId = typeof body?.target_client_id === 'string' ? body.target_client_id : ''
+        const name = typeof body?.name === 'string' ? body.name.trim() : ''
+        if (!isUuid(targetClientId) || name.length === 0) {
+          return jsonResponse(request, { error: 'target_client_id and name are required' }, 400)
+        }
+        const rows = await restSelect<TemplateRow>('workflow_templates', {
+          id: `eq.${id}`,
+          select: 'id,spec,slots,version',
+          limit: '1',
+        })
+        if (rows.length === 0) return jsonResponse(request, { error: 'Not found' }, 404)
+        const template = rows[0]
+        const slots = (Array.isArray(template.slots) ? template.slots : []) as TemplateSlot[]
+        const slotValues = (body?.slot_values !== null && typeof body?.slot_values === 'object' ? body.slot_values : {}) as Record<string, string | number>
+        const { spec, applied } = applySlotValues(template.spec as unknown as WorkflowSpec, slots, slotValues)
+        // The explicit form identity wins over slot-applied values.
+        spec.name = name
+        if (typeof body?.description === 'string' && body.description.trim().length > 0) spec.description = body.description.trim()
+        const validated = safeParseWorkflowSpec(spec)
+        if (!validated.success) {
+          const detail = validated.error.issues.slice(0, 3).map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+          return jsonResponse(request, { error: `Instantiated spec failed validation — ${detail}` }, 422)
+        }
+        const created = await restInsert<Record<string, unknown>>('workflows', {
+          client_id: targetClientId,
+          name: spec.name,
+          description: spec.description,
+          spec: validated.data,
+          version: 1,
+          source_template_id: template.id,
+          source_template_version: template.version,
+        })
+        return jsonResponse(request, { workflow: created[0], applied }, 201)
+      }
+
+      if (request.method === 'DELETE' && id && isUuid(id)) {
+        const rows = await restSelect<{ is_curated: boolean }>('workflow_templates', {
+          id: `eq.${id}`,
+          select: 'is_curated',
+          limit: '1',
+        })
+        if (rows.length === 0) return jsonResponse(request, { error: 'Not found' }, 404)
+        if (rows[0].is_curated) return jsonResponse(request, { error: 'Curated templates cannot be deleted' }, 403)
+        await restDelete('workflow_templates', { id: `eq.${id}` })
+        return jsonResponse(request, { ok: true })
+      }
+
+      return jsonResponse(request, { error: 'Unsupported template operation' }, 405)
     }
 
     // ------------------------------------------------------------------

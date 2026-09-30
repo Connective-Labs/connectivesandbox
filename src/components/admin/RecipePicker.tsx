@@ -1,8 +1,9 @@
-// Guided workflow creation (polish 5). "New workflow" opens this picker —
-// one card per named recipe from docs/modules.md, plus "Something else" for a
-// plain chat. Picking a recipe creates the workflow and pre-fills the builder
-// chat with a first message naming the client and the business pattern, so
-// the internal person only edits the bracketed specifics and sends.
+// Guided workflow creation (polish 5, library in Phase 2). "New workflow"
+// opens this picker — one card per named recipe from docs/modules.md, the
+// reusable template library, and "Something else" for a plain chat. Picking a
+// recipe creates the workflow and pre-fills the builder chat with a first
+// message naming the client and the business pattern; picking a library
+// template opens the slot form and instantiates a real workflow.
 //
 // Extending: add an entry to RECIPES. Nothing else needs to change — the
 // list IS the picker. Recipes must stay aligned with the named recipes in
@@ -13,7 +14,9 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare, MonitorCheck } from 'lucide-react'
 
 import { GhostButton, PrimaryButton } from '@/components/ui/Primitives'
+import { TemplateInstantiateForm, TemplateLibraryGrid } from '@/components/admin/TemplateFlow'
 import { cn } from '@/lib/utils'
+import { listTemplates, type WorkflowTemplate } from '@/data/adapters/templates'
 
 export interface BuilderRecipe {
   id: 'photo-triage' | 'operations-desk' | 'document-intake' | 'approval-desk' | 'something-else'
@@ -28,6 +31,13 @@ export interface BuilderRecipe {
    * no pre-fill. Bracketed specifics are what the person edits before sending.
    */
   seed: (clientName: string | null) => string | null
+}
+
+export interface TemplateInstantiateRequest {
+  templateId: string
+  name: string
+  description: string
+  slotValues: Record<string, string | number>
 }
 
 export const RECIPES: readonly BuilderRecipe[] = [
@@ -103,6 +113,7 @@ export function RecipePicker({
   onClose,
   onCreate,
   onDuplicate,
+  onInstantiate,
 }: {
   open: boolean
   clientName: string | null
@@ -111,12 +122,31 @@ export function RecipePicker({
   /** Create the workflow, then pre-fill the builder chat with the seed. */
   onCreate: (name: string, seed: string | null) => void
   onDuplicate: () => void
+  /** Instantiate a library template with rep-customised slot values.
+   *  Throws on failure (the error surfaces in the form); the parent closes
+   *  the picker on success. */
+  onInstantiate: (request: TemplateInstantiateRequest) => Promise<void>
 }) {
   const [picked, setPicked] = useState<BuilderRecipe | null>(null)
   const [name, setName] = useState('')
+  const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null)
+  const [pickedTemplate, setPickedTemplate] = useState<WorkflowTemplate | null>(null)
+  const [instantiating, setInstantiating] = useState(false)
+  const [instantiateError, setInstantiateError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) setPicked(null)
+    if (!open) {
+      setPicked(null)
+      setPickedTemplate(null)
+      setInstantiating(false)
+      setInstantiateError(null)
+      return
+    }
+    // The library loads lazily per open; a failure leaves it hidden (the
+    // recipes remain the primary path) rather than blocking the picker.
+    void listTemplates()
+      .then((rows) => setTemplates(rows))
+      .catch(() => setTemplates([]))
   }, [open])
 
   useEffect(() => {
@@ -136,6 +166,18 @@ export function RecipePicker({
   const confirm = () => {
     if (picked === null || name.trim().length === 0) return
     onCreate(name.trim(), picked.seed(clientName))
+  }
+
+  const confirmInstantiate = async (request: TemplateInstantiateRequest) => {
+    setInstantiating(true)
+    setInstantiateError(null)
+    try {
+      await onInstantiate(request)
+    } catch (error) {
+      setInstantiateError((error as Error).message)
+    } finally {
+      setInstantiating(false)
+    }
   }
 
   return (
@@ -161,7 +203,16 @@ export function RecipePicker({
             transition={MODAL_TRANSITION}
             onClick={(event) => event.stopPropagation()}
           >
-            {picked === null ? (
+            {pickedTemplate !== null ? (
+              <TemplateInstantiateForm
+                template={pickedTemplate}
+                clientName={clientName}
+                busy={instantiating}
+                error={instantiateError}
+                onBack={() => setPickedTemplate(null)}
+                onConfirm={confirmInstantiate}
+              />
+            ) : picked === null ? (
               <>
                 <p className="text-sm font-semibold text-ink">Start a workflow</p>
                 <p className="mt-0.5 text-xs text-slate-400">
@@ -194,6 +245,12 @@ export function RecipePicker({
                     </button>
                   ))}
                 </div>
+                {templates !== null && templates.length > 0 && (
+                  <TemplateLibraryGrid
+                    templates={templates.filter((template) => !template.is_curated)}
+                    onPick={(template) => setPickedTemplate(template)}
+                  />
+                )}
                 {canDuplicate && (
                   <div className="mt-4 border-t border-slate-100 pt-3">
                     <button

@@ -388,6 +388,44 @@ dependencies beyond the standard scaffold set without a captain decision.
   secret list; `docs/modules.md` transcript-ready section reflects shipped
   reality.
 
+## Phase 2 — Reusable template library
+
+- **Templates are whole-workflow assets.** `workflow_templates` (migration
+  20261002000000) stores the curated spec, `category` (recipe id or 'custom'),
+  `version`, lineage (`parent_template_id` chains versions,
+  `created_from_workflow_id` records provenance), and `slots` — the
+  parameterisation list from `src/engine/templating.ts`. Workflows gain
+  `source_template_id` + `source_template_version` (provenance per build).
+  Gateway RLS: RLS on, NO policies — service_role inside admin-api only.
+- **`src/engine/templating.ts` is the parameterisation layer.** `templateSlots`
+  walks EVERY rewordable display string (canonical walk shared with the
+  feedback planner — planner's `stringSlots` delegates) plus every judge
+  threshold, each with the source value as `example`. `applySlotValues`
+  applies rep-edited values deterministically: unknown paths ignored, strings
+  length-bounded, thresholds clamp to ±0.1 of the example inside the global
+  band (review < auto enforced), input never mutated.
+- **Templates keep their curated copy; instantiation is identity-safe.** The
+  instantiate form REQUIRES a fresh name/description (defaults never carry
+  another client's name); other slots pre-fill from examples and only CHANGED
+  values travel. The frozen Zod schema gates every instantiation in admin-api.
+- **Curated seeds self-heal.** `GET /admin-api/templates` upserts the four
+  recipe baselines compiled from the catalogue (drift → version bump, so
+  workflows record which revision they came from). No migration-embedded
+  spec JSON — the catalogue stays the single source of truth.
+- **admin-api templates resource** (admin-only): list (with usage counts),
+  get, save-as-template (`POST /templates {workflow_id, name?, as_version_of?}`),
+  instantiate (`POST /templates/:id/instantiate`), delete (curated protected).
+  admin-api now imports the engine + Zod — the import map is wired in
+  config.toml for it.
+- **UI.** RecipePicker gains the Library section (saved templates with
+  version + usage; picking opens the grouped slot form —
+  `TemplateFlow.tsx`). "Save as template" sits beside Publish
+  (`SaveTemplateModal.tsx`, version-of dropdown for lineage). Instantiate
+  creates the workflow at version 1 and rides the normal Test/Publish gate.
+- **Verify.** `node scripts/verify-builder-spec.mjs` now covers
+  `templateSlots` coverage, exact/non-mutating/deterministic application,
+  bound-clamping, and a fully-customised Zod-valid round-trip.
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**

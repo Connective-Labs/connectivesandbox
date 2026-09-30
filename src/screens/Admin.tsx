@@ -9,7 +9,8 @@ import { motion } from 'framer-motion'
 import { Building2, Check, ChevronDown, Pencil, Send, Trash2, Workflow, X } from 'lucide-react'
 
 import AppTopBar from '@/components/AppTopBar'
-import { RecipePicker } from '@/components/admin/RecipePicker'
+import { RecipePicker, type TemplateInstantiateRequest } from '@/components/admin/RecipePicker'
+import { SaveTemplateModal } from '@/components/admin/SaveTemplateModal'
 import { LiveBuild } from '@/components/admin/LiveBuild'
 import { CapabilitiesGuide } from '@/components/admin/CapabilitiesGuide'
 import { Inbox } from '@/components/admin/Inbox'
@@ -32,6 +33,7 @@ import {
 } from '@/data/adapters/clients'
 import { markDraftPublished } from '@/data/adapters/live'
 import { listFeedbackThreads } from '@/data/adapters/feedback'
+import { instantiateTemplate, saveTemplateFromWorkflow } from '@/data/adapters/templates'
 import {
   createWorkflow,
   deleteWorkflow,
@@ -277,6 +279,7 @@ export default function Admin() {
   // Guided creation (polish 5): New workflow opens the recipe picker; the
   // rail starts pinned so the client/workflow lists are visible un-hovered.
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
   const [railPinned, setRailPinned] = useState(true)
   const [renamingWorkflowId, setRenamingWorkflowId] = useState<string | null>(null)
   const [workflowRenameValue, setWorkflowRenameValue] = useState('')
@@ -486,6 +489,30 @@ export default function Admin() {
     const spec = await getWorkflowSpec(selectedWorkflowId)
     const workflow = await createWorkflow(selectedClientId, `${selectedWorkflow.name} copy`, spec)
     await reloadWorkflows(selectedClientId, workflow.id)
+  }
+
+  // Template library (Phase 2): instantiate a saved build for this client,
+  // or save the current published workflow into the library.
+  const handleInstantiate = async (request: TemplateInstantiateRequest) => {
+    if (selectedClientId === null) throw new Error('Select a client first')
+    const result = await instantiateTemplate(request.templateId, selectedClientId, request.name, {
+      description: request.description,
+      slotValues: request.slotValues,
+    })
+    setPickerOpen(false)
+    await reloadWorkflows(selectedClientId, result.workflow.id)
+    setPublishedMessage(`Created “${result.workflow.name}” from the template — review and publish.`)
+    window.setTimeout(() => setPublishedMessage(null), 4000)
+  }
+
+  const handleSaveTemplate = async (name: string, asVersionOf: string | null) => {
+    if (selectedWorkflowId === null) throw new Error('No workflow selected')
+    const template = await saveTemplateFromWorkflow(selectedWorkflowId, name, asVersionOf ?? undefined)
+    setSaveTemplateOpen(false)
+    setPublishedMessage(
+      `Saved “${template.name}” to the library${asVersionOf !== null ? ` as v${template.version}` : ''}.`,
+    )
+    window.setTimeout(() => setPublishedMessage(null), 4000)
   }
 
   const submitWorkflowRename = async (workflowId: string) => {
@@ -1159,7 +1186,7 @@ export default function Admin() {
             </div>
           </div>
 
-          <div className="shrink-0 border-t border-slate-200 px-4 py-3">
+          <div className="shrink-0 space-y-2 border-t border-slate-200 px-4 py-3">
             <PrimaryButton
               onClick={() => void publish()}
               disabled={validation.state !== 'valid'}
@@ -1167,8 +1194,15 @@ export default function Admin() {
             >
               Publish to Client
             </PrimaryButton>
+            <GhostButton
+              onClick={() => setSaveTemplateOpen(true)}
+              disabled={validation.state !== 'valid' || selectedWorkflowId === null}
+              className="w-full"
+            >
+              Save as template
+            </GhostButton>
             {publishedMessage !== null && (
-              <p role="status" className="mt-2 text-xs font-medium text-emerald-700">
+              <p role="status" className="text-xs font-medium text-emerald-700">
                 {publishedMessage}
               </p>
             )}
@@ -1183,6 +1217,13 @@ export default function Admin() {
         onClose={() => setPickerOpen(false)}
         onCreate={(name, seed) => void createFromRecipe(name, seed)}
         onDuplicate={() => void duplicateCurrentWorkflow()}
+        onInstantiate={handleInstantiate}
+      />
+      <SaveTemplateModal
+        open={saveTemplateOpen}
+        workflowName={selectedWorkflow?.name ?? null}
+        onClose={() => setSaveTemplateOpen(false)}
+        onSave={handleSaveTemplate}
       />
     </div>
   )

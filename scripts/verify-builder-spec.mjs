@@ -16,6 +16,7 @@ import { strict as assert } from 'node:assert'
 
 import { extractSpecJson, validateSpec } from '../supabase/functions/_shared/spec-validate.ts'
 import { applyProposal, stringSlots } from '../supabase/functions/_shared/planner.ts'
+import { applySlotValues, templateSlots } from '../src/engine/templating.ts'
 import { compileSpec } from '../src/engine/compilers.ts'
 import { applyFacts } from '../src/engine/facts.ts'
 
@@ -175,6 +176,79 @@ const baseline = compileSpec('photo-triage', applyFacts([]))
   assert.ok(meter !== undefined, 'a meter was added back')
   assert.ok(spec.judges.some((judge) => judge.id === meter.judge_id), 'the added meter binds an existing judge')
   ok('applyProposal: judge-bound panels bind real judges only')
+}
+
+// ---------------------------------------------------------------------------
+// 4. Template slots — the reusable library's parameterisation layer
+// ---------------------------------------------------------------------------
+{
+  const slots = templateSlots(baseline)
+  const byKey = new Map(slots.map((slot) => [slot.key, slot]))
+  assert.ok(byKey.has('name') && byKey.has('description'), 'identity slots exist')
+  assert.ok(byKey.has('intake.components.photo_slot.capture_hint'), 'wave string slot present')
+  assert.ok(byKey.has('judges.decision_judge.thresholds.auto'), 'threshold slot present')
+  const examples = slots.filter((slot) => slot.type === 'string')
+  assert.ok(examples.every((slot) => typeof slot.example === 'string' && slot.example.length > 0), 'string slots carry examples')
+  ok('templateSlots: identity, wave strings, thresholds all covered with examples')
+}
+{
+  // Exact application: rename, reword one slot, nudge one threshold.
+  const slots = templateSlots(baseline)
+  const before = JSON.stringify(baseline)
+  const { spec, applied } = applySlotValues(baseline, slots, {
+    name: 'LiT curtain triage',
+    'intake.components.photo_slot.capture_hint': 'Rail in frame, fabric tag visible',
+    'judges.decision_judge.thresholds.review': 0.55,
+  })
+  assert.equal(JSON.stringify(baseline), before, 'the source spec is never mutated')
+  assert.equal(spec.name, 'LiT curtain triage')
+  assert.equal(
+    spec.intake.components.find((component) => component.id === 'photo_slot').capture_hint,
+    'Rail in frame, fabric tag visible',
+  )
+  assert.equal(spec.judges.find((judge) => judge.id === 'decision_judge').thresholds.review, 0.55)
+  assert.equal(applied.length, 3, 'the applied diff names every change')
+  // Determinism: the same values always produce byte-identical output.
+  const again = applySlotValues(baseline, slots, {
+    name: 'LiT curtain triage',
+    'intake.components.photo_slot.capture_hint': 'Rail in frame, fabric tag visible',
+    'judges.decision_judge.thresholds.review': 0.55,
+  })
+  assert.equal(JSON.stringify(again.spec), JSON.stringify(spec), 'instantiation is deterministic')
+  ok('applySlotValues: exact application, non-mutating, deterministic')
+}
+{
+  // Bounded: unknown slots ignored; over-limit strings dropped; thresholds
+  // clamp to ±0.1 of the example inside the global band.
+  const slots = templateSlots(baseline)
+  const decision = baseline.judges.find((judge) => judge.id === 'decision_judge')
+  const { spec, applied } = applySlotValues(baseline, slots, {
+    'intake.components.does_not_exist.label': 'nope',
+    'intake.components.photo_slot.label': 'x'.repeat(400),
+    'judges.decision_judge.thresholds.auto': 0.1,
+    'judges.decision_judge.thresholds.review': 0.99,
+  })
+  assert.equal(spec.name, baseline.name, 'untouched identity keeps the template copy')
+  assert.equal(
+    spec.judges.find((judge) => judge.id === 'decision_judge').thresholds.auto,
+    decision.thresholds.auto - 0.1,
+    'auto clamps to a 0.1 step of the example',
+  )
+  assert.equal(applied.length, 2, 'both bounded threshold tweaks survived; the invalid strings did not')
+  ok('applySlotValues: unknown/over-limit dropped, thresholds clamped to the band')
+}
+{
+  // A full round-trip: template → instantiate → still Zod-valid.
+  const slots = templateSlots(baseline)
+  const values = Object.fromEntries(
+    slots
+      .filter((slot) => slot.type === 'string' && slot.group !== 'identity')
+      .map((slot, index) => [slot.key, `${slot.example} (client ${index})`]),
+  )
+  const { spec } = applySlotValues(baseline, slots, { ...values, name: 'Round trip', description: 'Instantiated' })
+  const result = validateSpec(JSON.stringify(spec))
+  assert.ok(result.ok, `instantiated spec must validate: ${result.ok ? '' : result.error}`)
+  ok('template round-trip: fully customised instantiation stays Zod-valid')
 }
 
 console.log(`\nVERIFY-BUILDER-SPEC: PASS (${passed} assertions)`)
