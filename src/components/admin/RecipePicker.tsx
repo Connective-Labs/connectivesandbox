@@ -114,6 +114,7 @@ export function RecipePicker({
   onDuplicate,
   onInstantiate,
   onPlan,
+  onClone,
 }: {
   open: boolean
   clientName: string | null
@@ -129,6 +130,8 @@ export function RecipePicker({
   /** GLM planning stage: brief in, plan + compiled draft into the builder.
    *  Throws on failure; the parent closes the picker on success. */
   onPlan: (brief: string) => Promise<void>
+  /** Raw cross-client copy of the current workflow (parent opens its modal). */
+  onClone: () => void
 }) {
   const [picked, setPicked] = useState<BuilderRecipe | null>(null)
   const [name, setName] = useState('')
@@ -342,7 +345,7 @@ export function RecipePicker({
                   />
                 )}
                 {canDuplicate && (
-                  <div className="mt-4 border-t border-slate-100 pt-3">
+                  <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
                     <button
                       type="button"
                       onClick={() => {
@@ -353,6 +356,17 @@ export function RecipePicker({
                     >
                       <Copy size={12} aria-hidden="true" />
                       Duplicate the current workflow instead
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPicked(null)
+                        onClone()
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-accent"
+                    >
+                      <Copy size={12} aria-hidden="true" />
+                      Copy to another client…
                     </button>
                   </div>
                 )}

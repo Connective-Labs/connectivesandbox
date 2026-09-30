@@ -121,3 +121,20 @@ export async function saveWorkflowSpec(workflowId: string, spec: WorkflowSpec): 
   )
   invalidateReads()
 }
+
+/** Raw cross-client copy (Phase 4): clone a workflow's spec into another
+ *  client. The curated path is save-as-template + instantiate. */
+export async function cloneWorkflowTo(
+  workflowId: string,
+  targetClientId: string,
+  name: string,
+): Promise<WorkflowSummary> {
+  const { workflow } = withData(
+    await callFunction<{ workflow: WorkflowRow }>(`/admin-api/workflows/${workflowId}/clone`, {
+      method: 'POST',
+      body: { target_client_id: targetClientId, name },
+    }),
+  )
+  invalidateReads()
+  return toSummary(workflow)
+}

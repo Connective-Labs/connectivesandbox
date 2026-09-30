@@ -21,6 +21,7 @@
 //   POST   /workflows {client_id, name, spec?}
 //   PATCH  /workflows/:id {name?, description?}   also patches the stored spec
 //   PUT    /workflows/:id/spec {spec}             publish: bump version + name-sync
+//   POST   /workflows/:id/clone {target_client_id, name}   raw cross-client copy
 //   DELETE /workflows/:id
 //   GET    /templates                   library list (curated seeds self-heal)
 //   GET    /templates/:id               full template (spec + slots)
@@ -308,6 +309,35 @@ Deno.serve(async (request) => {
           },
         )
         return jsonResponse(request, { workflow: updated[0] })
+      }
+
+      if (request.method === 'POST' && id && isUuid(id) && sub === 'clone') {
+        // Raw cross-client copy (Phase 4 convenience): clone the source
+        // workflow's spec into another client. The template library is the
+        // curated path; this is the quick "same build, different client".
+        const body = await request.json()
+        const targetClientId = typeof body?.target_client_id === 'string' ? body.target_client_id : ''
+        const name = typeof body?.name === 'string' ? body.name.trim() : ''
+        if (!isUuid(targetClientId) || name.length === 0) {
+          return jsonResponse(request, { error: 'target_client_id and name are required' }, 400)
+        }
+        const sourceRows = await restSelect<WorkflowRow>('workflows', {
+          id: `eq.${id}`,
+          select: 'id,spec',
+          limit: '1',
+        })
+        if (sourceRows.length === 0) return jsonResponse(request, { error: 'Not found' }, 404)
+        const sourceSpec = sourceRows[0].spec
+        const created = await restInsert<Record<string, unknown>>('workflows', {
+          client_id: targetClientId,
+          name,
+          description: typeof (sourceSpec as { description?: unknown }).description === 'string'
+            ? (sourceSpec as { description: string }).description
+            : '',
+          spec: sourceSpec,
+          version: 1,
+        })
+        return jsonResponse(request, { workflow: created[0] }, 201)
       }
 
       if (request.method === 'DELETE' && id && isUuid(id) && !sub) {

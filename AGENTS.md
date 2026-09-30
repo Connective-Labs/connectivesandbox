@@ -466,6 +466,30 @@ dependencies beyond the standard scaffold set without a captain decision.
   WITHOUT cascade — deleting a client fails while a template points at its
   workflow; cleanup must null it first.
 
+## Phase 4 — Automation & polish
+
+- **Cancellable builder turns.** `streamFunction` takes a `{signal}`; the
+  composer swaps Send for Cancel while a turn runs (`chatAbortRef`) and a
+  cancelled turn appends "_Turn cancelled._" — no composer lockup on a hung
+  gateway call.
+- **Plain-language spec diff.** `src/engine/diff.ts` (`specDiffSummary`,
+  pure, deterministic): when a chat reply carries a spec AND a valid spec is
+  loaded, the message renders a "Changes vs current spec" card above its
+  SpecBlock (adds/removals by labelled id, threshold nudges, wording note).
+- **Recipe seeds are durable.** `createFromRecipe` persists the seed under
+  `cs_seed_<workflowId>`; the history effect restores it while the build has
+  not started (history ≤ greeting); sending clears it. Unfilled brackets in
+  the composer show a "fill the bracketed specifics" hint.
+- **Raw cross-client clone.** `POST /admin-api/workflows/:id/clone
+  {target_client_id, name}` — the quick "same build, different client"; the
+  curated path remains save-as-template + instantiate. UI: picker footer
+  "Copy to another client…" → `CloneWorkflowModal` (client select + name).
+- **CI.** `.github/workflows/ci.yml`: lint + strict build + all three
+  headless verify scripts on every PR/branch push. The hosted e2e suites
+  stay captain-run (they need the firstmate config store). Cut-line item NOT
+  built: the "template vN+1 available" badge on workflows instantiated from
+  older template versions (provenance columns already record it).
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**

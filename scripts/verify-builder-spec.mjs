@@ -17,6 +17,7 @@ import { strict as assert } from 'node:assert'
 import { extractSpecJson, validateSpec } from '../supabase/functions/_shared/spec-validate.ts'
 import { applyProposal, stringSlots } from '../supabase/functions/_shared/planner.ts'
 import { applySlotValues, templateSlots } from '../src/engine/templating.ts'
+import { specDiffSummary } from '../src/engine/diff.ts'
 import { compileSpec } from '../src/engine/compilers.ts'
 import { applyFacts } from '../src/engine/facts.ts'
 
@@ -249,6 +250,35 @@ const baseline = compileSpec('photo-triage', applyFacts([]))
   const result = validateSpec(JSON.stringify(spec))
   assert.ok(result.ok, `instantiated spec must validate: ${result.ok ? '' : result.error}`)
   ok('template round-trip: fully customised instantiation stays Zod-valid')
+}
+
+// ---------------------------------------------------------------------------
+// 5. Spec diff — the plain-language summary of what a new proposal changes
+// ---------------------------------------------------------------------------
+{
+  const identical = specDiffSummary(baseline, baseline)
+  assert.deepEqual(identical, [], 'identical specs diff to nothing')
+
+  const { spec: changed } = applyProposal(baseline, {
+    strings: { name: 'Renamed triage' },
+    componentOps: [{ op: 'add', component: 'kpi_tiles' }],
+    thresholdTweaks: [{ judgeId: 'decision_judge', auto: 0.85 }],
+    summary: '',
+  })
+  const summary = specDiffSummary(baseline, changed)
+  assert.ok(summary.some((entry) => entry.includes('added')), 'an add is named')
+  assert.ok(summary.some((entry) => entry.includes('adjusted')), 'a threshold nudge is named')
+  assert.ok(summary.includes('updated the wording'), 'wording changes are reported')
+
+  const removed = applyProposal(baseline, {
+    strings: {},
+    componentOps: [{ op: 'remove', component: 'escalation_card' }],
+    thresholdTweaks: [],
+    summary: '',
+  })
+  const removal = specDiffSummary(baseline, removed.spec)
+  assert.ok(removal.some((entry) => entry.includes('removed')), 'a removal is named')
+  ok('specDiffSummary: adds/removals/thresholds/wording, empty when identical')
 }
 
 console.log(`\nVERIFY-BUILDER-SPEC: PASS (${passed} assertions)`)
