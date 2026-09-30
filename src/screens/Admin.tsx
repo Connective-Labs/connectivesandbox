@@ -34,6 +34,8 @@ import {
 import { markDraftPublished } from '@/data/adapters/live'
 import { listFeedbackThreads } from '@/data/adapters/feedback'
 import { instantiateTemplate, saveTemplateFromWorkflow } from '@/data/adapters/templates'
+import { planWorkflow } from '@/data/adapters/plan'
+import { planToMarkdown } from '@/engine/plan'
 import {
   createWorkflow,
   deleteWorkflow,
@@ -512,6 +514,34 @@ export default function Admin() {
     setPublishedMessage(
       `Saved “${template.name}” to the library${asVersionOf !== null ? ` as v${template.version}` : ''}.`,
     )
+    window.setTimeout(() => setPublishedMessage(null), 4000)
+  }
+
+  // GLM planning stage (Phase 3): brief in — a new workflow, a compiled draft,
+  // and a plan card in the builder transcript come out. The rep stays the gate.
+  const handlePlan = async (brief: string) => {
+    if (selectedClientId === null) throw new Error('Select a client first')
+    const workflow = await createWorkflow(selectedClientId, 'Planned workflow', null)
+    await reloadWorkflows(selectedClientId, workflow.id)
+    const result = await planWorkflow(workflow.id, selectedClientId, brief)
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: `bc_plan_${Date.now()}`,
+        role: 'assistant' as const,
+        content: planToMarkdown(result.plan),
+        at: new Date().toISOString(),
+        spec: result.draft.spec,
+      },
+    ])
+    if (result.plan.open_questions.length > 0) {
+      setDraft(
+        `Open questions to settle:\n${result.plan.open_questions.map((question) => `- ${question}`).join('\n')}\n\n`,
+      )
+      composerRef.current?.focus()
+    }
+    setPickerOpen(false)
+    setPublishedMessage('Plan ready — load the draft into the preview and publish when happy.')
     window.setTimeout(() => setPublishedMessage(null), 4000)
   }
 
@@ -1218,6 +1248,7 @@ export default function Admin() {
         onCreate={(name, seed) => void createFromRecipe(name, seed)}
         onDuplicate={() => void duplicateCurrentWorkflow()}
         onInstantiate={handleInstantiate}
+        onPlan={handlePlan}
       />
       <SaveTemplateModal
         open={saveTemplateOpen}

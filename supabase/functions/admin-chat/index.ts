@@ -77,10 +77,12 @@ Deno.serve(async (request) => {
   }
 
   try {
-    // The workflow identifies the client whose builder chat this is.
-    const workflows = await restSelect<{ id: string; client_id: string; name: string }>('workflows', {
+    // The workflow identifies the client whose builder chat this is. The
+    // stored spec rides along: follow-up turns edit the REAL current spec
+    // instead of regenerating blind from prose history.
+    const workflows = await restSelect<{ id: string; client_id: string; name: string; spec: Record<string, unknown> }>('workflows', {
       id: `eq.${workflowId}`,
-      select: 'id,client_id,name',
+      select: 'id,client_id,name,spec',
       limit: '1',
     })
     const workflow = workflows[0]
@@ -129,8 +131,28 @@ Deno.serve(async (request) => {
     const systemPrompt = instructions[0]?.content ??
       'You are the workflow builder for Connective Sandbox. Emit a single WorkflowSpec JSON object when asked.'
 
+    // Context wiring (Phase 3): the model sees who this build is for and the
+    // spec as it currently stands, so "add a field" edits reality rather
+    // than regenerating from memory. A placeholder spec (fresh workflow)
+    // contributes nothing.
+    const storedSpec = workflow.spec
+    const isPlaceholderSpec =
+      storedSpec === null ||
+      typeof storedSpec !== 'object' ||
+      Object.keys(storedSpec).length === 0 ||
+      (typeof (storedSpec as { description?: unknown }).description === 'string' &&
+        ((storedSpec as { description?: string }).description ?? '') === '' &&
+        ((storedSpec as { intake?: { components?: unknown[] } }).intake?.components?.length ?? 0) === 0)
+    const contextBlock = [
+      'CURRENT CONTEXT:',
+      `- Workflow: ${workflow.name}`,
+      `- This workflow's stored spec (edit THIS when the rep asks for changes — re-emit the complete spec with your changes applied): ${
+        isPlaceholderSpec ? 'none yet' : JSON.stringify(storedSpec).slice(0, 6000)
+      }`,
+    ].join('\n')
+
     const conversation: GlmMessage[] = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: `${systemPrompt}\n\n${contextBlock}` },
       ...history
         .filter((row) => row.role === 'user' || row.role === 'assistant')
         .map<GlmMessage>((row) => ({ role: row.role as 'user' | 'assistant', content: row.content })),

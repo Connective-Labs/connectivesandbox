@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare, MonitorCheck } from 'lucide-react'
+import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare, MonitorCheck, Sparkles } from 'lucide-react'
 
 import { GhostButton, PrimaryButton } from '@/components/ui/Primitives'
 import { TemplateInstantiateForm, TemplateLibraryGrid } from '@/components/admin/TemplateFlow'
@@ -39,7 +39,6 @@ export interface TemplateInstantiateRequest {
   description: string
   slotValues: Record<string, string | number>
 }
-
 export const RECIPES: readonly BuilderRecipe[] = [
   {
     id: 'photo-triage',
@@ -114,6 +113,7 @@ export function RecipePicker({
   onCreate,
   onDuplicate,
   onInstantiate,
+  onPlan,
 }: {
   open: boolean
   clientName: string | null
@@ -126,6 +126,9 @@ export function RecipePicker({
    *  Throws on failure (the error surfaces in the form); the parent closes
    *  the picker on success. */
   onInstantiate: (request: TemplateInstantiateRequest) => Promise<void>
+  /** GLM planning stage: brief in, plan + compiled draft into the builder.
+   *  Throws on failure; the parent closes the picker on success. */
+  onPlan: (brief: string) => Promise<void>
 }) {
   const [picked, setPicked] = useState<BuilderRecipe | null>(null)
   const [name, setName] = useState('')
@@ -133,6 +136,10 @@ export function RecipePicker({
   const [pickedTemplate, setPickedTemplate] = useState<WorkflowTemplate | null>(null)
   const [instantiating, setInstantiating] = useState(false)
   const [instantiateError, setInstantiateError] = useState<string | null>(null)
+  const [planMode, setPlanMode] = useState(false)
+  const [brief, setBrief] = useState('')
+  const [planning, setPlanning] = useState(false)
+  const [planError, setPlanError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) {
@@ -140,6 +147,10 @@ export function RecipePicker({
       setPickedTemplate(null)
       setInstantiating(false)
       setInstantiateError(null)
+      setPlanMode(false)
+      setBrief('')
+      setPlanning(false)
+      setPlanError(null)
       return
     }
     // The library loads lazily per open; a failure leaves it hidden (the
@@ -180,6 +191,20 @@ export function RecipePicker({
     }
   }
 
+  const confirmPlan = async () => {
+    const trimmed = brief.trim()
+    if (trimmed.length === 0 || planning) return
+    setPlanning(true)
+    setPlanError(null)
+    try {
+      await onPlan(trimmed)
+    } catch (error) {
+      setPlanError((error as Error).message)
+    } finally {
+      setPlanning(false)
+    }
+  }
+
   return (
     <AnimatePresence>
       {open && (
@@ -203,7 +228,51 @@ export function RecipePicker({
             transition={MODAL_TRANSITION}
             onClick={(event) => event.stopPropagation()}
           >
-            {pickedTemplate !== null ? (
+            {planMode ? (
+              <>
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                  <Sparkles size={14} aria-hidden="true" className="text-accent" />
+                  Plan it for me
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  Tell the planner about the client and the decision they make today. A recent
+                  recorded call is picked up automatically.
+                </p>
+                <div className="mt-4">
+                  <label htmlFor="plan-brief" className="sr-only">
+                    Planning brief
+                  </label>
+                  <textarea
+                    id="plan-brief"
+                    value={brief}
+                    onChange={(event) => setBrief(event.target.value)}
+                    rows={5}
+                    autoFocus
+                    placeholder={
+                      clientName !== null
+                        ? `e.g. ${clientName} clean curtains and blinds. Customers WhatsApp photos, we decide: quote now, ask one question, or visit…`
+                        : 'e.g. My client cleans curtains. Customers WhatsApp photos, we decide: quote now, ask one question, or visit…'
+                    }
+                    className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-slate-400 focus:border-accent focus:outline-none"
+                  />
+                </div>
+                {planError !== null && (
+                  <p role="alert" className="mt-2 text-xs font-medium text-red-600">
+                    {planError}
+                  </p>
+                )}
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  <GhostButton onClick={() => setPlanMode(false)}>Back</GhostButton>
+                  <PrimaryButton
+                    onClick={() => void confirmPlan()}
+                    disabled={brief.trim().length === 0 || planning}
+                    className={cn((brief.trim().length === 0 || planning) && 'opacity-50')}
+                  >
+                    {planning ? 'Planning…' : 'Plan the workflow'}
+                  </PrimaryButton>
+                </div>
+              </>
+            ) : pickedTemplate !== null ? (
               <TemplateInstantiateForm
                 template={pickedTemplate}
                 clientName={clientName}
@@ -214,6 +283,27 @@ export function RecipePicker({
               />
             ) : picked === null ? (
               <>
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode(true)}
+                    className="group flex w-full items-center gap-2.5 rounded-xl border border-accent bg-accent-wash p-3 text-left transition hover:shadow-sm focus:border-accent focus:outline-none"
+                  >
+                    <Sparkles
+                      size={16}
+                      aria-hidden="true"
+                      className="shrink-0 text-accent"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-ink">
+                        Plan it for me <span className="font-normal text-slate-500">(recommended)</span>
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-snug text-slate-600">
+                        Describe the client — GLM plans the build, picks the template, and customises it.
+                      </span>
+                    </span>
+                  </button>
+                </div>
                 <p className="text-sm font-semibold text-ink">Start a workflow</p>
                 <p className="mt-0.5 text-xs text-slate-400">
                   {clientName !== null

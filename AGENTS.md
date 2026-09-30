@@ -426,6 +426,46 @@ dependencies beyond the standard scaffold set without a captain decision.
   `templateSlots` coverage, exact/non-mutating/deterministic application,
   bound-clamping, and a fully-customised Zod-valid round-trip.
 
+## Phase 3 — GLM planning stage (plan-workflow)
+
+- **The planner decides WHAT, never HOW.** `src/engine/plan.ts` holds the
+  Zod-validated `WorkflowPlan` (headline, rationale, template choice, module
+  sanity list, slot-keyed customisations with a one-line why, open questions)
+  and `planToMarkdown` for the transcript card. The model NEVER emits a spec:
+  `plan-workflow` compiles the chosen template through `applySlotValues`, so
+  only real slot keys apply and the frozen Zod schema gates the result.
+- **`plan-workflow` Edge Function** (import_map wired in config.toml):
+  admin-only; rate guard counted durably from `spec_drafts` source='plan'
+  (`PLAN_MAX_PER_HOUR`, default 10); context = client name + existing
+  workflows ("do not duplicate") + up to 8 template candidates WITH slot keys
+  (so every customisation names a real slot) + transcript tail. Transcript
+  auto-attaches from the client's most recent call within 7 days — no picker.
+  ONE GLM-5.3-Flash call (`PLAN_REASONING_EFFORT`, default 'low' — the
+  compile is deterministic and rep-gated, speed wins), max 3 self-correction
+  rounds. Failure of a template id match falls back to the generic baseline
+  (a draft is never rejected).
+- **Persistence.** Draft rides `spec_drafts` (source='plan', the validated
+  plan in the new `plan` jsonb column, migration 20261002000001); the
+  workflow row's name/description sync from the compiled spec so the rail
+  reads well before publish. Response `{plan, draft, applied}`.
+- **Builder chat is now spec-aware.** `admin-chat` injects CURRENT CONTEXT
+  (workflow name + stored spec, placeholder specs contribute nothing) into
+  the system prompt — "add a field" edits reality instead of regenerating
+  from prose memory.
+- **UI.** "Plan it for me" is the recommended first card in RecipePicker →
+  brief step → the parent creates the workflow, plans into it, appends the
+  plan card to the builder transcript (markdown, compiled draft attached —
+  the existing "Load into preview" flow is the Test action), and pre-fills
+  the composer with the open questions for Refine-in-chat.
+- **E2E.** `supabase/tests/plan-e2e.sh` (prefix `__plan_e2e_*`): curated
+  self-seed, save-as-template + v2 lineage, cross-client instantiate with
+  slot application + provenance + identity safety, GLM plan → valid compiled
+  draft, gateway isolation. Cleanup order matters (FKs): null
+  `workflows.source_template_id` → null/drop templates → cascade clients.
+  NOTE: `workflow_templates.created_from_workflow_id` references workflows
+  WITHOUT cascade — deleting a client fails while a template points at its
+  workflow; cleanup must null it first.
+
 ## Brand
 
 Connective Labs: single accent `#FF6B35`, ink `#091426`, Tailwind **slate**

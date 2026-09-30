@@ -58,7 +58,7 @@ an equivalent same-origin rewrite.
 ```bash
 supabase functions serve          # local
 supabase functions deploy auth-code auth-codes admin-api admin-chat client-chat \
-  run-workflow artifact-api feedback live-draft live-facts live-transcribe
+  run-workflow artifact-api feedback live-draft live-facts live-transcribe plan-workflow
 ```
 
 Configuration is by **secret NAME only** — never commit or paste values:
@@ -77,6 +77,8 @@ Configuration is by **secret NAME only** — never commit or paste values:
 - `GLM_MODEL`, `GLM_REASONING_EFFORT` — builder/chat model overrides.
 - `PLANNER_ADAPTER` — `'glm'` (default) | `'none'` disables feedback drafts.
 - `FEEDBACK_PLANNER_MAX_PER_HOUR` — per-client planner spend bound (default 5).
+- `PLAN_MAX_PER_HOUR`, `PLAN_REASONING_EFFORT` — GLM planning-stage guard
+  (default 10/hour) and effort (default `low`).
 - `SCREEN_COOLDOWN_SECONDS` / `EXTRACT_COOLDOWN_SECONDS` /
   `DRAFT_COOLDOWN_SECONDS` / `MAX_FACTS_PER_SESSION` — live-build cadences.
 - `ALLOWED_ORIGINS` — CORS allow-list (never a wildcard with credentials).

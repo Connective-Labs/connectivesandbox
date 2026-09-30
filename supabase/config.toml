@@ -471,6 +471,10 @@ import_map = "./functions/import_map.json"
 verify_jwt = false
 import_map = "./functions/import_map.json"
 
+[functions.plan-workflow]
+verify_jwt = false
+import_map = "./functions/import_map.json"
+
 # Livebuild v2: server STT engine (Deepgram batch-chunked). MediaRecorder
 # chunks arrive as raw audio bytes; only text returns. Gated on the
 # DEEPGRAM_API_KEY secret (503 + reason:'secret_pending' when absent — the
