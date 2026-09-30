@@ -236,8 +236,9 @@ dependencies beyond the standard scaffold set without a captain decision.
   recording cross-browser: MediaRecorder capture → sequential self-contained
   chunks → text only returns. Both engines sit behind the ONE
   `TranscriptionEngine` interface in `src/data/adapters/transcribe.ts`
-  (`chooseEngine()`: server when `DEEPGRAM_API_KEY` is present — it is NOT
-  yet provisioned (reason 'secret_pending'), Web Speech fallback). No audio
+  (`chooseEngine()`: server when a `GET /live-transcribe` probe reports
+  available — 503 while `DEEPGRAM_API_KEY` is unprovisioned — Web Speech
+  fallback). No audio
   stored anywhere. Captions render ONE growing transcript with word-level
   fades; previews animate only the delta (stable element ids + mount
   animations; compiled specs are byte-stable for unchanged state).
@@ -345,6 +346,47 @@ dependencies beyond the standard scaffold set without a captain decision.
 - **Capabilities guide.** In-product: `src/components/admin/CapabilitiesGuide.tsx`
   (collapsible "What can I build?" card set above the centre tabs). Repo doc:
   `docs/capabilities.md` — keep the two in step when recipes/modules change.
+
+## Hardening 1 — bug sweep + live-build wave parity
+
+- **Builder history window fixed.** `admin-chat` fetched messages ASC with
+  `limit 24` — PostgREST applies limit AFTER order, so long conversations fed
+  the model the OLDEST rows and hid the newest turn. Now desc + reverse.
+- **fill_strings keeps its recipe.** The parallel string pass now sends
+  `workflow_id` (recipe inference matches the draft compile — the generic
+  recompile that dropped recipe seeds is gone) and feeds the GLM call the
+  session's transcript tail instead of an empty context.
+- **Feedback planner sees the wave modules.** `_shared/planner.ts` covers all
+  intake kinds + addable panels (escalation_card, kpi_tiles, pipeline_tracker,
+  status_queue, alert_feed, confidence_meter, analysis, monitoring); wave
+  string slots are rewordable everywhere. triage_verdict / quote_panel /
+  thread_preview are reword-ONLY (judge-bound, not auto-addable).
+  decision_log + usage_counter are ALWAYS-ON — never planner-removable.
+  `applyProposal` deep-clones panels (nested rows/lines/alerts mutate in
+  place).
+- **Live build compiles the waves.** `intake.photo` → keyed `photo_slot`
+  (judge-state key `photos`), `intake.files` → generic `file_upload`
+  (document-intake), `intake.follow_up` → `follow_up_card`. New judges
+  `judge.archetype` / `judge.follow_up` / `judge.price_band` with closed sets;
+  new decision sets `route` + `price_band`. `operations-desk` is a REAL
+  recipe (queue/alerts/kpi/pipeline/escalation panels) — the approval-desk
+  alias is GONE; `normaliseRecipeId('operations-desk')` returns itself.
+  Option-fact narrowing (`judge.decision.options.<opt>`) still applies only to
+  the decision judge; the new choice judges compile their full closed sets.
+- **Shared spec validation.** `extractSpecJson`/`validateSpec` live in
+  `_shared/spec-validate.ts` (pure, importable by Edge Functions AND Node).
+- **Headless verify layer (no secrets, CI-runnable).**
+  `node scripts/verify-fact-ledger.mjs` (13 assertions, wave parity included),
+  `node scripts/verify-builder-spec.mjs` (extraction/validation/applier,
+  no-mutation guarantee), `node --experimental-strip-types
+  scripts/verify-wave-modules.mts`. Run all three after engine changes.
+- **Small fixes:** publish syncs the workflow row's `name` from `spec.name`;
+  duplicate 4-digit client codes surface an inline error (unique constraint
+  swallowed silently before); dead code removed (`appendBuilderMessage`,
+  `getUsageSnapshot` + the `/usage/snapshot` route, `fetchLiveLedger`,
+  `UsageSnapshot`); README deploy list covers all 11 functions and the full
+  secret list; `docs/modules.md` transcript-ready section reflects shipped
+  reality.
 
 ## Brand
 

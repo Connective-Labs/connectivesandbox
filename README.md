@@ -57,17 +57,28 @@ an equivalent same-origin rewrite.
 
 ```bash
 supabase functions serve          # local
-supabase functions deploy auth-code auth-codes admin-api admin-chat client-chat run-workflow artifact-api
+supabase functions deploy auth-code auth-codes admin-api admin-chat client-chat \
+  run-workflow artifact-api feedback live-draft live-facts live-transcribe
 ```
 
 Configuration is by **secret NAME only** — never commit or paste values:
 
 - `JWT_SECRET` — HS256 signing key for session JWTs.
 - `ADMIN_ACCESS_CODE` — the admin's four-digit code.
+- `ZAI_API_KEY` — the GLM builder/chat/planner credential (admin-chat,
+  client-chat, run-workflow's analysis, the feedback planner).
 - `JUDGE_PROVIDER` — `jev` (default) | `laya_modal` | `laya_space` | `mock`.
 - `JUDGE_ENDPOINT_URL`, `JUDGE_API_KEY` (+ optional `JUDGE_MODEL`) — judge
-  credentials, resolved only inside `run-workflow`.
+  credentials, resolved only inside `run-workflow`, `feedback`, and
+  `live-facts`.
+- `DEEPGRAM_API_KEY` (+ optional `DEEPGRAM_MODEL`, `DEEPGRAM_LANGUAGE`) —
+  when set, live build uses server transcription (all browsers); Web Speech
+  is the fallback.
 - `GLM_MODEL`, `GLM_REASONING_EFFORT` — builder/chat model overrides.
+- `PLANNER_ADAPTER` — `'glm'` (default) | `'none'` disables feedback drafts.
+- `FEEDBACK_PLANNER_MAX_PER_HOUR` — per-client planner spend bound (default 5).
+- `SCREEN_COOLDOWN_SECONDS` / `EXTRACT_COOLDOWN_SECONDS` /
+  `DRAFT_COOLDOWN_SECONDS` / `MAX_FACTS_PER_SESSION` — live-build cadences.
 - `ALLOWED_ORIGINS` — CORS allow-list (never a wildcard with credentials).
 
 ## Judge setup

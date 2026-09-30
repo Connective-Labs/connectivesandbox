@@ -5,7 +5,7 @@
 // over WhatsApp); slug is derived from the name since the clients table has
 // no slug column.
 
-import type { Client, UsageSnapshot } from '@/data/types'
+import type { Client } from '@/data/types'
 import { viaCache, invalidateReads } from '@/data/prefetch'
 import { assertOk, callFunction, type FunctionResponse } from '@/data/api'
 
@@ -84,23 +84,6 @@ export async function renameClient(clientId: string, name: string): Promise<void
 export async function deleteClient(clientId: string): Promise<void> {
   withData(await callFunction(`/admin-api/clients/${clientId}`, { method: 'DELETE' }))
   invalidateReads()
-}
-
-export async function getUsageSnapshot(clientId: string, period: string): Promise<UsageSnapshot | null> {
-  const response = await callFunction<{
-    sessions?: number
-    judge_calls?: number
-    error?: string
-  }>(`/admin-api/usage/snapshot?client_id=${encodeURIComponent(clientId)}`)
-  if (response.status === 404) return null
-  assertOk(response as unknown as FunctionResponse<{ error?: string }>)
-  return {
-    client_id: clientId,
-    period,
-    sessions: response.data.sessions ?? 0,
-    judge_calls: response.data.judge_calls ?? 0,
-    tokens: 0,
-  }
 }
 
 export interface OrgUsageTotals {

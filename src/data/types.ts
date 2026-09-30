@@ -66,11 +66,3 @@ export interface WorkflowSummary {
   version: number
   updated_at: string
 }
-
-export interface UsageSnapshot {
-  client_id: string
-  period: string
-  sessions: number
-  judge_calls: number
-  tokens: number
-}

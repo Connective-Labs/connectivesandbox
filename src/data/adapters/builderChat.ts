@@ -76,13 +76,6 @@ export async function getBuilderHistory(key: string): Promise<BuilderChatMessage
   }))
 }
 
-/** Server-side persistence replaced the local store — kept for signature parity. */
-export function appendBuilderMessage(_key: string, _message: BuilderChatMessage): void {
-  // The admin-chat Edge Function persists user + assistant messages.
-  void _key
-  void _message
-}
-
 export interface BuilderSendResult {
   content: string
   /** The validated spec, when the reply contained one. */

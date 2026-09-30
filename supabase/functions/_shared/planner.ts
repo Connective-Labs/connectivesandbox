@@ -29,15 +29,42 @@
 // current value, review never below 0.5, auto never above 0.95, review
 // strictly below auto), and the frozen Zod schema remains the hard gate in
 // the caller.
+//
+// Module coverage: every intake component AND every dashboard panel from the
+// wave 1+2 extension is rewordable. Addable/removable: the intake kinds plus
+// the panels that build validly from generic catalogue data. Judge-bound
+// panels (triage_verdict, quote_panel, thread_preview) are reword-only —
+// their verdict maps and quote lines are too spec-specific to auto-add.
+// decision_log and usage_counter are ALWAYS-ON (the ownership trail and run
+// counter are in every workflow by design) — never added, never removed.
 
-import type { Judge, WorkflowSpec } from '../../../src/engine/types.ts'
+import type { DashboardPanel, IntakeComponent, Judge, WorkflowSpec } from '../../../src/engine/types.ts'
 import { glmChat } from '../_shared/glm.ts'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type ComponentKind = 'file_upload' | 'chat' | 'form' | 'button_group' | 'text_field'
+export type IntakeKind =
+  | 'file_upload'
+  | 'chat'
+  | 'form'
+  | 'button_group'
+  | 'text_field'
+  | 'photo_slot'
+  | 'follow_up_card'
+
+export type PanelKind =
+  | 'confidence_meter'
+  | 'analysis'
+  | 'monitoring'
+  | 'escalation_card'
+  | 'kpi_tiles'
+  | 'pipeline_tracker'
+  | 'status_queue'
+  | 'alert_feed'
+
+export type ComponentKind = IntakeKind | PanelKind
 
 export interface PlannerProposal {
   strings: Record<string, string>
@@ -58,33 +85,62 @@ export interface SpecPlanner {
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic catalogue — legal parts only (docs/modules.md), shared with
-// the live-draft brain. Component ids, option sets and default strings are
-// catalogue values; a planner may only add/remove whole components.
+// Deterministic catalogue — legal parts only (docs/modules.md). Component
+// ids, option sets and default strings are catalogue values; a planner may
+// only add/remove whole components or panels.
 // ---------------------------------------------------------------------------
 
-export const COMPONENT_KINDS: ComponentKind[] = [
+export const INTAKE_KINDS: readonly IntakeKind[] = [
   'file_upload',
   'chat',
   'form',
   'button_group',
   'text_field',
+  'photo_slot',
+  'follow_up_card',
 ]
 
-interface CatalogueComponent {
-  kind: ComponentKind
-  build: () => WorkflowSpec['intake']['components'][number]
+export const PANEL_KINDS: readonly PanelKind[] = [
+  'confidence_meter',
+  'analysis',
+  'monitoring',
+  'escalation_card',
+  'kpi_tiles',
+  'pipeline_tracker',
+  'status_queue',
+  'alert_feed',
+]
+
+export const COMPONENT_KINDS: readonly ComponentKind[] = [...INTAKE_KINDS, ...PANEL_KINDS]
+
+/** Panels present in every workflow by design — never planner-removable. */
+const ALWAYS_ON_PANELS: ReadonlySet<string> = new Set(['decision_log', 'usage_counter'])
+
+const PHOTO_ACCEPT = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+
+interface CatalogueIntake {
+  area: 'intake'
+  build: () => IntakeComponent
   slots: (id: string) => Record<string, string>
 }
 
-export const CATALOGUE: Record<ComponentKind, CatalogueComponent> = {
+interface CataloguePanel {
+  area: 'dashboard'
+  /** null when the panel cannot be built validly for this spec (e.g. a
+   *  confidence_meter with no judge to bind). */
+  build: (judges: Judge[]) => DashboardPanel | null
+  slots: (id: string) => Record<string, string>
+}
+
+export const CATALOGUE: Record<ComponentKind, CatalogueIntake | CataloguePanel> = {
+  // --- Intake components ---------------------------------------------------
   file_upload: {
-    kind: 'file_upload',
+    area: 'intake',
     build: () => ({
       type: 'file_upload',
       id: 'photo_slot',
       label: 'Photos of the item',
-      accept: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+      accept: [...PHOTO_ACCEPT],
       multiple: true,
       instructions: 'Upload clear photos of the affected area — sharp, well-lit, whole item in frame.',
     }),
@@ -95,7 +151,7 @@ export const CATALOGUE: Record<ComponentKind, CatalogueComponent> = {
     }),
   },
   chat: {
-    kind: 'chat',
+    area: 'intake',
     build: () => ({
       type: 'chat',
       id: 'intake_chat',
@@ -108,7 +164,7 @@ export const CATALOGUE: Record<ComponentKind, CatalogueComponent> = {
     }),
   },
   form: {
-    kind: 'form',
+    area: 'intake',
     build: () => ({
       type: 'form',
       id: 'intake_form',
@@ -119,7 +175,7 @@ export const CATALOGUE: Record<ComponentKind, CatalogueComponent> = {
     }),
   },
   button_group: {
-    kind: 'button_group',
+    area: 'intake',
     build: () => ({
       type: 'button_group',
       id: 'request_kind',
@@ -137,7 +193,7 @@ export const CATALOGUE: Record<ComponentKind, CatalogueComponent> = {
     }),
   },
   text_field: {
-    kind: 'text_field',
+    area: 'intake',
     build: () => ({
       type: 'text_field',
       id: 'short_note',
@@ -145,6 +201,149 @@ export const CATALOGUE: Record<ComponentKind, CatalogueComponent> = {
       multiline: false,
     }),
     slots: (id) => ({ [`intake.components.${id}.label`]: 'Anything else we should know?' }),
+  },
+  photo_slot: {
+    area: 'intake',
+    build: () => ({
+      type: 'photo_slot',
+      id: 'item_photos',
+      label: 'Photos of the item',
+      capture_hint: 'Include the whole item in frame — sharp, well-lit, no clutter.',
+      accept: [...PHOTO_ACCEPT],
+      key: 'photos',
+    }),
+    slots: (id) => ({
+      [`intake.components.${id}.label`]: 'Photos of the item',
+      [`intake.components.${id}.capture_hint`]: 'Include the whole item in frame — sharp, well-lit, no clutter.',
+    }),
+  },
+  follow_up_card: {
+    area: 'intake',
+    build: () => ({
+      type: 'follow_up_card',
+      id: 'follow_up',
+      label: 'One quick question',
+      question: 'Which of these would unblock the job?',
+      options: [
+        { value: 'more_photos', label: 'I can send more photos' },
+        { value: 'book_visit', label: 'Book a site visit' },
+      ],
+      allow_text: true,
+    }),
+    slots: (id) => ({
+      [`intake.components.${id}.label`]: 'One quick question',
+      [`intake.components.${id}.question`]: 'Which of these would unblock the job?',
+      [`intake.components.${id}.options.more_photos.label`]: 'I can send more photos',
+      [`intake.components.${id}.options.book_visit.label`]: 'Book a site visit',
+    }),
+  },
+
+  // --- Dashboard panels ----------------------------------------------------
+  confidence_meter: {
+    area: 'dashboard',
+    build: (judges) => {
+      const judge = judges[0]
+      if (judge === undefined) return null
+      return { type: 'confidence_meter', id: `confidence_${judge.id}`, judge_id: judge.id, label: 'Decision confidence' }
+    },
+    slots: (id) => ({ [`dashboard.panels.${id}.label`]: 'Decision confidence' }),
+  },
+  analysis: {
+    area: 'dashboard',
+    build: () => ({ type: 'analysis', id: 'summary', title: 'Summary', source: 'llm' }),
+    slots: (id) => ({ [`dashboard.panels.${id}.title`]: 'Summary' }),
+  },
+  monitoring: {
+    area: 'dashboard',
+    build: () => ({ type: 'monitoring', id: 'ops_metrics', metrics: ['decisions', 'runs'] }),
+    slots: () => ({}),
+  },
+  escalation_card: {
+    area: 'dashboard',
+    build: (judges) => ({
+      type: 'escalation_card',
+      id: 'escalation',
+      contact: 'The duty manager',
+      reason: 'Anything the AI cannot decide confidently is routed here for a human check.',
+      action_label: 'Open handoff',
+      ...(judges[0] !== undefined ? { judge_id: judges[0].id } : {}),
+    }),
+    slots: (id) => ({
+      [`dashboard.panels.${id}.contact`]: 'The duty manager',
+      [`dashboard.panels.${id}.reason`]: 'Anything the AI cannot decide confidently is routed here for a human check.',
+      [`dashboard.panels.${id}.action_label`]: 'Open handoff',
+    }),
+  },
+  kpi_tiles: {
+    area: 'dashboard',
+    build: () => ({
+      type: 'kpi_tiles',
+      id: 'kpi_headline',
+      title: 'At a glance',
+      metrics: [
+        { label: 'Decisions', metric: 'decisions' },
+        { label: 'Workflow runs', metric: 'runs' },
+      ],
+    }),
+    slots: (id) => ({
+      [`dashboard.panels.${id}.title`]: 'At a glance',
+      [`dashboard.panels.${id}.metrics.0.label`]: 'Decisions',
+      [`dashboard.panels.${id}.metrics.1.label`]: 'Workflow runs',
+    }),
+  },
+  pipeline_tracker: {
+    area: 'dashboard',
+    build: (judges) => ({
+      type: 'pipeline_tracker',
+      id: 'pipeline',
+      title: 'Progress',
+      stages: [{ label: 'Received' }, { label: 'In review' }, { label: 'Done' }],
+      ...(judges[0] !== undefined ? { current_judge_id: judges[0].id } : {}),
+    }),
+    slots: (id) => ({
+      [`dashboard.panels.${id}.title`]: 'Progress',
+      [`dashboard.panels.${id}.stages.0.label`]: 'Received',
+      [`dashboard.panels.${id}.stages.1.label`]: 'In review',
+      [`dashboard.panels.${id}.stages.2.label`]: 'Done',
+    }),
+  },
+  status_queue: {
+    area: 'dashboard',
+    build: () => ({
+      type: 'status_queue',
+      id: 'work_queue',
+      title: 'Work queue',
+      rows: [
+        { id: 'demo_row', label: 'Demo row — live rows appear once the queue is connected', source: 'manual', severity: 'low', state: 'pending' },
+      ],
+      actions: [
+        { value: 'fulfil', label: 'Fulfil', primary: true },
+        { value: 'not_yet', label: 'Not yet', primary: false },
+      ],
+    }),
+    slots: (id) => ({
+      [`dashboard.panels.${id}.title`]: 'Work queue',
+      [`dashboard.panels.${id}.rows.demo_row.label`]: 'Demo row — live rows appear once the queue is connected',
+      [`dashboard.panels.${id}.actions.fulfil.label`]: 'Fulfil',
+      [`dashboard.panels.${id}.actions.not_yet.label`]: 'Not yet',
+    }),
+  },
+  alert_feed: {
+    area: 'dashboard',
+    build: () => ({
+      type: 'alert_feed',
+      id: 'alerts',
+      title: 'Alerts',
+      alerts: [
+        { id: 'demo_alert', title: 'Demo alert — aged items escalate automatically', source: 'system', age_days: 0, severity: 'low' },
+      ],
+      action_label: 'Review',
+    }),
+    slots: (id) => ({
+      [`dashboard.panels.${id}.title`]: 'Alerts',
+      [`dashboard.panels.${id}.alerts.demo_alert.title`]: 'Demo alert — aged items escalate automatically',
+      [`dashboard.panels.${id}.action_label`]: 'Review',
+    }),
   },
 }
 
@@ -178,7 +377,8 @@ function tweakThreshold(judge: Judge, tweak: { auto?: unknown; review?: unknown 
 // ---------------------------------------------------------------------------
 // String-slot whitelist — computed from the CURRENT spec, so a proposal can
 // only re-word what already exists (plus slots on catalogue components it
-// just added).
+// just added). Covers every intake component and every dashboard panel with
+// client-facing copy, wave modules included.
 // ---------------------------------------------------------------------------
 
 const SLOT_LIMITS: Record<string, number> = { name: 80, description: 400 }
@@ -215,11 +415,69 @@ export function stringSlots(spec: WorkflowSpec): Map<string, string> {
           }
         }
         break
+      case 'photo_slot':
+        slots.set(`${prefix}.label`, component.label)
+        slots.set(`${prefix}.capture_hint`, component.capture_hint)
+        break
+      case 'follow_up_card':
+        slots.set(`${prefix}.label`, component.label)
+        slots.set(`${prefix}.question`, component.question)
+        for (const option of component.options) slots.set(`${prefix}.options.${option.value}.label`, option.label)
+        break
     }
   }
   for (const judge of spec.judges) slots.set(`judges.${judge.id}.question`, judge.question)
   for (const panel of spec.dashboard.panels) {
-    if (panel.type === 'analysis') slots.set(`dashboard.panels.${panel.id}.title`, panel.title)
+    const prefix = `dashboard.panels.${panel.id}`
+    switch (panel.type) {
+      case 'analysis':
+      case 'thread_preview':
+      case 'quote_panel':
+      case 'kpi_tiles':
+      case 'pipeline_tracker':
+      case 'status_queue':
+      case 'alert_feed':
+        slots.set(`${prefix}.title`, panel.title)
+        break
+      default:
+        break
+    }
+    switch (panel.type) {
+      case 'confidence_meter':
+      case 'usage_counter':
+        slots.set(`${prefix}.label`, panel.label)
+        break
+      case 'quote_panel':
+        slots.set(`${prefix}.basis`, panel.basis)
+        panel.lines.forEach((line, index) => slots.set(`${prefix}.lines.${index}.label`, line.label))
+        for (const band of panel.bands ?? []) slots.set(`${prefix}.bands.${band.value}.label`, band.label)
+        break
+      case 'escalation_card':
+        slots.set(`${prefix}.contact`, panel.contact)
+        slots.set(`${prefix}.reason`, panel.reason)
+        if (panel.reference !== undefined) slots.set(`${prefix}.reference`, panel.reference)
+        slots.set(`${prefix}.action_label`, panel.action_label)
+        break
+      case 'triage_verdict':
+        for (const verdict of panel.verdicts) slots.set(`${prefix}.verdicts.${verdict.value}.label`, verdict.label)
+        break
+      case 'status_queue':
+        for (const row of panel.rows) slots.set(`${prefix}.rows.${row.id}.label`, row.label)
+        for (const action of panel.actions) slots.set(`${prefix}.actions.${action.value}.label`, action.label)
+        break
+      case 'alert_feed':
+        for (const alert of panel.alerts) slots.set(`${prefix}.alerts.${alert.id}.title`, alert.title)
+        slots.set(`${prefix}.action_label`, panel.action_label)
+        break
+      case 'kpi_tiles':
+        panel.metrics.forEach((metric, index) => slots.set(`${prefix}.metrics.${index}.label`, metric.label))
+        break
+      case 'pipeline_tracker':
+        panel.stages.forEach((stage, index) => slots.set(`${prefix}.stages.${index}.label`, stage.label))
+        break
+      default:
+        break
+    }
   }
   return slots
 }
@@ -239,7 +497,7 @@ function setStringSlot(spec: WorkflowSpec, path: string, value: string): void {
     if (component === undefined) return
     const rest = componentMatch[2]
     const optionMatch = rest.match(/^options\.([a-z0-9_]+)\.label$/)
-    if (optionMatch !== null && component.type === 'button_group') {
+    if (optionMatch !== null && (component.type === 'button_group' || component.type === 'follow_up_card')) {
       const option = component.options.find((entry) => entry.value === optionMatch[1])
       if (option !== undefined) option.label = value
       return
@@ -275,6 +533,14 @@ function setStringSlot(spec: WorkflowSpec, path: string, value: string): void {
       component.label = value
       return
     }
+    if (component.type === 'photo_slot' && (rest === 'label' || rest === 'capture_hint')) {
+      component[rest] = value
+      return
+    }
+    if (component.type === 'follow_up_card' && (rest === 'label' || rest === 'question')) {
+      component[rest] = value
+      return
+    }
     return
   }
   const judgeMatch = path.match(/^judges\.([a-z0-9_]+)\.question$/)
@@ -283,10 +549,75 @@ function setStringSlot(spec: WorkflowSpec, path: string, value: string): void {
     if (judge !== undefined) judge.question = value
     return
   }
-  const panelMatch = path.match(/^dashboard\.panels\.([a-z0-9_]+)\.title$/)
+  const panelMatch = path.match(/^dashboard\.panels\.([a-z0-9_]+)\.(.+)$/)
   if (panelMatch !== null) {
     const panel = spec.dashboard.panels.find((entry) => entry.id === panelMatch[1])
-    if (panel !== undefined && panel.type === 'analysis') panel.title = value
+    if (panel === undefined) return
+    const rest = panelMatch[2]
+    // Scalar leaf fields (title / label / basis / contact / reason / …).
+    const leafFields = ['title', 'label', 'basis', 'contact', 'reason', 'reference', 'action_label'] as const
+    if ((leafFields as readonly string[]).includes(rest)) {
+      if (rest === 'title' && 'title' in panel) panel.title = value
+      else if (rest === 'label' && (panel.type === 'confidence_meter' || panel.type === 'usage_counter')) panel.label = value
+      else if (rest === 'basis' && panel.type === 'quote_panel') panel.basis = value
+      else if (panel.type === 'escalation_card' && (rest === 'contact' || rest === 'reason' || rest === 'reference' || rest === 'action_label')) {
+        if (rest === 'reference') {
+          panel.reference = value
+        } else {
+          panel[rest] = value
+        }
+      }
+      return
+    }
+    // Indexed / keyed sub-object labels.
+    const verdictMatch = rest.match(/^verdicts\.([a-z0-9_]+)\.label$/)
+    if (verdictMatch !== null && panel.type === 'triage_verdict') {
+      const verdict = panel.verdicts.find((entry) => entry.value === verdictMatch[1])
+      if (verdict !== undefined) verdict.label = value
+      return
+    }
+    const bandMatch = rest.match(/^bands\.([a-z0-9_]+)\.label$/)
+    if (bandMatch !== null && panel.type === 'quote_panel') {
+      const band = (panel.bands ?? []).find((entry) => entry.value === bandMatch[1])
+      if (band !== undefined) band.label = value
+      return
+    }
+    const lineMatch = rest.match(/^lines\.(\d+)\.label$/)
+    if (lineMatch !== null && panel.type === 'quote_panel') {
+      const line = panel.lines[Number(lineMatch[1])]
+      if (line !== undefined) line.label = value
+      return
+    }
+    const rowMatch = rest.match(/^rows\.([a-z0-9_]+)\.label$/)
+    if (rowMatch !== null && panel.type === 'status_queue') {
+      const row = panel.rows.find((entry) => entry.id === rowMatch[1])
+      if (row !== undefined) row.label = value
+      return
+    }
+    const actionMatch = rest.match(/^actions\.([a-z0-9_]+)\.label$/)
+    if (actionMatch !== null && panel.type === 'status_queue') {
+      const action = panel.actions.find((entry) => entry.value === actionMatch[1])
+      if (action !== undefined) action.label = value
+      return
+    }
+    const alertMatch = rest.match(/^alerts\.([a-z0-9_]+)\.title$/)
+    if (alertMatch !== null && panel.type === 'alert_feed') {
+      const alert = panel.alerts.find((entry) => entry.id === alertMatch[1])
+      if (alert !== undefined) alert.title = value
+      return
+    }
+    const metricMatch = rest.match(/^metrics\.(\d+)\.label$/)
+    if (metricMatch !== null && panel.type === 'kpi_tiles') {
+      const metric = panel.metrics[Number(metricMatch[1])]
+      if (metric !== undefined) metric.label = value
+      return
+    }
+    const stageMatch = rest.match(/^stages\.(\d+)\.label$/)
+    if (stageMatch !== null && panel.type === 'pipeline_tracker') {
+      const stage = panel.stages[Number(stageMatch[1])]
+      if (stage !== undefined) stage.label = value
+      return
+    }
   }
 }
 
@@ -302,34 +633,53 @@ export function applyProposal(current: WorkflowSpec, proposal: PlannerProposal):
     ...current,
     intake: { components: current.intake.components.map((component) => structuredClone(component)) },
     judges: current.judges.map((judge) => ({ ...judge, thresholds: { ...judge.thresholds }, ...(judge.options !== undefined ? { options: [...judge.options] } : {}) })),
-    dashboard: { panels: current.dashboard.panels.map((panel) => ({ ...panel })) },
+    // Panels deep-cloned: nested rows/lines/alerts are mutated in place below.
+    dashboard: { panels: current.dashboard.panels.map((panel) => structuredClone(panel)) },
   }
   const applied: string[] = []
 
   // --- Structural ops (catalogue only) ---
   for (const op of proposal.componentOps ?? []) {
-    if (CATALOGUE[op.component] === undefined) continue
-    const hasKind = spec.intake.components.some((component) => component.type === op.component)
-    if (op.op === 'add' && !hasKind) {
-      const built = CATALOGUE[op.component].build()
-      spec.intake.components.push(built)
-      applied.push(`added the ${op.component.replace('_', ' ')} step`)
-    }
-    if (op.op === 'remove' && hasKind && spec.intake.components.length > 1) {
-      spec.intake.components = spec.intake.components.filter((component) => component.type !== op.component)
-      applied.push(`removed the ${op.component.replace('_', ' ')} step`)
+    const entry = CATALOGUE[op.component]
+    if (entry === undefined) continue
+    if (entry.area === 'intake') {
+      const hasKind = spec.intake.components.some((component) => component.type === op.component)
+      if (op.op === 'add' && !hasKind) {
+        spec.intake.components.push(entry.build())
+        applied.push(`added the ${op.component.replace(/_/g, ' ')} step`)
+      }
+      if (op.op === 'remove' && hasKind && spec.intake.components.length > 1) {
+        spec.intake.components = spec.intake.components.filter((component) => component.type !== op.component)
+        applied.push(`removed the ${op.component.replace(/_/g, ' ')} step`)
+      }
+    } else {
+      const hasKind = spec.dashboard.panels.some((panel) => panel.type === op.component)
+      if (op.op === 'add' && !hasKind) {
+        const built = entry.build(spec.judges)
+        if (built !== null) {
+          spec.dashboard.panels.push(built)
+          applied.push(`added the ${op.component.replace(/_/g, ' ')} panel`)
+        }
+      }
+      if (op.op === 'remove' && hasKind && !ALWAYS_ON_PANELS.has(op.component)) {
+        spec.dashboard.panels = spec.dashboard.panels.filter((panel) => panel.type !== op.component)
+        applied.push(`removed the ${op.component.replace(/_/g, ' ')} panel`)
+      }
     }
   }
   // An intake surface must exist; chat is the universal intake.
   if (spec.intake.components.length === 0) {
-    spec.intake.components.push(CATALOGUE.chat.build())
+    const chatEntry = CATALOGUE.chat
+    if (chatEntry.area === 'intake') spec.intake.components.push(chatEntry.build())
     applied.push('added the chat step')
   }
 
   // --- String slots (whitelist; catalogue defaults for newly added parts) ---
   const whitelist = stringSlots(spec)
   for (const component of spec.intake.components) {
-    for (const [path, value] of Object.entries(CATALOGUE[component.type].slots(component.id))) {
+    const entry = CATALOGUE[component.type]
+    if (entry === undefined || entry.area !== 'intake') continue
+    for (const [path, value] of Object.entries(entry.slots(component.id))) {
       if (!whitelist.has(path)) whitelist.set(path, value)
     }
   }
@@ -365,14 +715,16 @@ function humanisePath(path: string): string {
   if (path === 'description') return 'the workflow description'
   const judge = path.match(/^judges\.([a-z0-9_]+)\.question$/)
   if (judge !== null) return `the “${judge[1].replace(/_/g, ' ')}” question`
-  const panel = path.match(/^dashboard\.panels\.([a-z0-9_]+)\.title$/)
-  if (panel !== null) return `the “${panel[1].replace(/_/g, ' ')}” panel title`
+  const panel = path.match(/^dashboard\.panels\.([a-z0-9_]+)\.(.+)$/)
+  if (panel !== null) return `the ${panel[1].replace(/_/g, ' ')} panel ${panel[2].replace(/_/g, ' ')}`
   const option = path.match(/^intake\.components\.([a-z0-9_]+)\.options\.([a-z0-9_]+)\.label$/)
   if (option !== null) return `the “${option[2].replace(/_/g, ' ')}” option`
   const field = path.match(/^intake\.components\.([a-z0-9_]+)\.fields\.([a-z0-9_]+)\.label$/)
   if (field !== null) return `the “${field[2].replace(/_/g, ' ')}” field label`
+  const component = path.match(/^intake\.components\.([a-z0-9_]+)\.(.+)$/)
+  if (component !== null) return `the ${component[1].replace(/_/g, ' ')} ${component[2].replace(/_/g, ' ')}`
   const leaf = path.split('.').pop() ?? ''
-  return `the ${leaf} text`
+  return `the ${leaf.replace(/_/g, ' ')} text`
 }
 
 // ---------------------------------------------------------------------------
@@ -388,8 +740,12 @@ function glmPlanner(): SpecPlanner {
       const offered = [...slots.entries()]
         .map(([path, value]) => `"${path}": "${value.replace(/"/g, '\\"')}"`)
         .join(',\n')
-      const kinds = COMPONENT_KINDS.map((kind) => {
+      const intakeKinds = INTAKE_KINDS.map((kind) => {
         const present = input.currentSpec.intake.components.some((component) => component.type === kind)
+        return `${kind} (${present ? 'present' : 'absent'})`
+      }).join(', ')
+      const panelKinds = PANEL_KINDS.map((kind) => {
+        const present = input.currentSpec.dashboard.panels.some((panel) => panel.type === kind)
         return `${kind} (${present ? 'present' : 'absent'})`
       }).join(', ')
       const judges = input.currentSpec.judges
@@ -403,7 +759,7 @@ function glmPlanner(): SpecPlanner {
         `CURRENT SPEC:\n${JSON.stringify(input.currentSpec).slice(0, 6000)}`,
         'RULES:',
         `- string_edits may ONLY use the slot paths offered below (you may leave any untouched). Values are plain client-facing English (Singapore English), short.`,
-        `- component_ops may ONLY add/remove these whole components: ${kinds}. Never remove the last remaining component.`,
+        `- component_ops may ONLY add/remove: intake components — ${intakeKinds}; dashboard panels — ${panelKinds}. Never remove the last remaining intake component. The decision_log and usage_counter panels always stay.`,
         `- threshold_tweaks may only nudge a judge's auto/review by at most 0.1; auto stays at or below 0.95, review stays at or above 0.5, review stays below auto. Use threshold tweaks ONLY when the feedback is clearly about decision confidence, never for wording complaints.`,
         '- summary: one plain-language sentence describing the proposed change for a non-technical service rep (e.g. "changed quote validity to 14 days; added an escalation card").',
         'Reply with ONE JSON object and NOTHING else, shaped exactly:',

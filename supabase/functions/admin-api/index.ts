@@ -23,7 +23,6 @@
 //   PUT    /workflows/:id/spec {spec}             publish: bump version
 //   DELETE /workflows/:id
 //   GET    /usage/totals                org-wide totals (derived from decisions)
-//   GET    /usage/snapshot?client_id=&period=
 // Phase 6 additions (client sessions may read their own rows):
 //   GET    /sessions?workflow_id=&kind=         run/builder sessions (client: own)
 //   GET    /sessions/:id/decisions?limit=       the decision ledger for one session
@@ -224,12 +223,16 @@ Deno.serve(async (request) => {
         })
         if (rows.length === 0) return jsonResponse(request, { error: 'Not found' }, 404)
         const description = typeof spec.description === 'string' ? spec.description : ''
+        // The workflow row's name follows the spec's name on publish, so the
+        // rail and the preview can never drift apart.
+        const name = typeof spec.name === 'string' && spec.name.trim().length > 0 ? spec.name.trim() : null
         const updated = await restUpdate<Record<string, unknown>>(
           'workflows',
           { id: `eq.${id}` },
           {
             spec,
             description,
+            ...(name !== null ? { name } : {}),
             version: rows[0].version + 1,
             updated_at: new Date().toISOString(),
           },
@@ -351,26 +354,6 @@ Deno.serve(async (request) => {
       }
 
       if (!isAdmin) return jsonResponse(request, { error: 'Forbidden' }, 403)
-
-      if (request.method === 'GET' && id === 'snapshot') {
-        const clientId = url.searchParams.get('client_id')
-        // Scope through the owning session (decisions carry no client_id).
-        const sessionParams: Record<string, string> = { select: 'id' }
-        if (clientId && isUuid(clientId)) sessionParams.client_id = `eq.${clientId}`
-        const sessionRows = await restSelect<{ id: string }>('sessions', sessionParams)
-        let judgeCalls = 0
-        const runSessionIds = new Set<string>()
-        if (sessionRows.length > 0) {
-          const decisionSessions = await restSelect<{ session_id: string }>('decisions', {
-            session_id: `in.(${sessionRows.map((row) => row.id).join(',')})`,
-            select: 'session_id',
-          })
-          judgeCalls = decisionSessions.length
-          for (const row of decisionSessions) runSessionIds.add(row.session_id)
-        }
-        // Sessions counted as runs only when they produced decisions.
-        return jsonResponse(request, { sessions: runSessionIds.size, judge_calls: judgeCalls, tokens: 0 })
-      }
 
       return jsonResponse(request, { error: 'Unsupported usage operation' }, 405)
     }

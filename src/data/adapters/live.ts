@@ -117,34 +117,27 @@ export interface FillStringsResult {
 /**
  * Ask the server to run the GLM string pass for placeholder slots. The
  * skeleton draft is already on screen; the returned spec carries the landed
- * strings, which the preview fades in place by element id.
+ * strings, which the preview fades in place by element id. The workflow_id
+ * MUST ride along so the server recompiles with the SAME recipe context the
+ * drafts were compiled under — without it the recompile falls back to the
+ * generic baseline and drops every recipe-seeded element.
  */
-export async function fillLiveStrings(clientId: string, sessionId: string): Promise<FillStringsResult> {
+export async function fillLiveStrings(
+  clientId: string,
+  sessionId: string,
+  workflowId: string | null,
+): Promise<FillStringsResult> {
   const response = await callFunction<FillStringsResult>('/live-facts', {
     method: 'POST',
-    body: { client_id: clientId, session_id: sessionId, fill_strings: true },
+    body: {
+      client_id: clientId,
+      session_id: sessionId,
+      ...(workflowId !== null ? { workflow_id: workflowId } : {}),
+      fill_strings: true,
+    },
   })
   assertOk(response as unknown as FunctionResponse<{ error?: string }>)
   return response.data
-}
-
-/** Replayed ledger state for a session (client reload). */
-export async function fetchLiveLedger(
-  clientId: string,
-  sessionId: string,
-  recipeId?: string,
-): Promise<{ ledger: FactLedgerEntryView[]; signature: string; fact_count: number }> {
-  const params = new URLSearchParams({ client_id: clientId, session_id: sessionId })
-  if (recipeId !== undefined) params.set('recipe_id', recipeId)
-  const response = await callFunction<{ ledger?: FactLedgerEntryView[]; signature?: string; fact_count?: number; error?: string }>(
-    `/live-facts?${params.toString()}`,
-  )
-  assertOk(response as unknown as FunctionResponse<{ error?: string }>)
-  return {
-    ledger: response.data.ledger ?? [],
-    signature: response.data.signature ?? '',
-    fact_count: response.data.fact_count ?? 0,
-  }
 }
 
 // ---------------------------------------------------------------------------

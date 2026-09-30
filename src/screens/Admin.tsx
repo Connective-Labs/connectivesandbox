@@ -270,6 +270,7 @@ export default function Admin() {
   const [newClientOpen, setNewClientOpen] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [newClientCode, setNewClientCode] = useState('')
+  const [newClientError, setNewClientError] = useState<string | null>(null)
   const [renamingClientId, setRenamingClientId] = useState<string | null>(null)
   const [clientRenameValue, setClientRenameValue] = useState('')
   const [confirmingClientId, setConfirmingClientId] = useState<string | null>(null)
@@ -432,11 +433,23 @@ export default function Admin() {
     const name = newClientName.trim()
     const code = newClientCode.trim()
     if (name.length === 0 || !/^\d{4}$/.test(code)) return
-    const client = await createClient(name, code)
-    setNewClientOpen(false)
-    setNewClientName('')
-    setNewClientCode('')
-    await reloadClients(client.id)
+    try {
+      const client = await createClient(name, code)
+      setNewClientOpen(false)
+      setNewClientName('')
+      setNewClientCode('')
+      setNewClientError(null)
+      await reloadClients(client.id)
+    } catch (error) {
+      // Most likely a duplicate four-digit code (unique constraint) — the
+      // form stays open with the reason instead of failing silently.
+      const message = (error as Error).message
+      setNewClientError(
+        /duplicate|unique/i.test(message)
+          ? `The code ${code} is already in use — pick another four-digit code.`
+          : `Could not create the client — ${message}`,
+      )
+    }
   }
 
   const submitClientRename = async (clientId: string) => {
@@ -609,20 +622,37 @@ export default function Admin() {
         <div className="mt-2 space-y-1.5 rounded-lg border border-slate-200 bg-white p-2">
           <InlineInput
             value={newClientName}
-            onChange={setNewClientName}
+            onChange={(value) => {
+              setNewClientName(value)
+              setNewClientError(null)
+            }}
             placeholder="Client name"
             ariaLabel="New client name"
             onSubmit={submitNewClient}
-            onCancel={() => setNewClientOpen(false)}
+            onCancel={() => {
+              setNewClientOpen(false)
+              setNewClientError(null)
+            }}
           />
           <InlineInput
             value={newClientCode}
-            onChange={setNewClientCode}
+            onChange={(value) => {
+              setNewClientCode(value)
+              setNewClientError(null)
+            }}
             placeholder="Four-digit code"
             ariaLabel="New client four-digit access code"
             onSubmit={submitNewClient}
-            onCancel={() => setNewClientOpen(false)}
+            onCancel={() => {
+              setNewClientOpen(false)
+              setNewClientError(null)
+            }}
           />
+          {newClientError !== null && (
+            <p role="alert" className="px-1 text-xs font-medium text-red-600">
+              {newClientError}
+            </p>
+          )}
         </div>
       )}
       <div className="mt-3 space-y-1">

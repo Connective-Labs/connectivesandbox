@@ -24,7 +24,8 @@
 //   1. persist final transcript segments (service_role; never client-visible)
 //   2. flush mode (no segments + compile_signature): skip jev, compile the
 //      current ledger if it drifted from the last drafted signature — the
-//      draft cooldown floor (~10s) holds without losing the final state
+//      draft cooldown floor (~4s, polish 6) holds without losing the final
+//      state
 //   3. screen cooldown (~5s, durable anchor: transcript_segments) →
 //      STAGE 1 jev: material_change | no_change over the rolling transcript
 //   4. no material change → cheap return (the common case)
@@ -223,6 +224,7 @@ function recipeSeedDecisionSet(recipeId: RecipeId): string | null {
     'photo-triage': 'quote_or_visit',
     'document-intake': 'complete_incomplete',
     'approval-desk': 'approve_reject',
+    'operations-desk': 'route',
   }
   return seeds[recipeId] ?? null
 }
@@ -290,15 +292,28 @@ async function screenMateriality(input: {
 
 const FACT_KEYS: readonly string[] = [
   'intake.photo',
+  'intake.files',
   'intake.chat',
   'intake.form',
+  'intake.follow_up',
   'intake.request_kind',
   'intake.notes',
   'judge.decision',
   'judge.escalation',
   'judge.quality',
+  'judge.archetype',
+  'judge.follow_up',
+  'judge.price_band',
   'dashboard.summary',
   'dashboard.metrics',
+  'dashboard.triage_verdict',
+  'dashboard.quote',
+  'dashboard.thread',
+  'dashboard.escalation',
+  'dashboard.queue',
+  'dashboard.alerts',
+  'dashboard.kpi',
+  'dashboard.pipeline',
 ]
 
 function opCriteria(key: string): Record<string, string> {
@@ -568,12 +583,26 @@ async function requestStrings(slots: PendingSlot[], transcriptTail: string[]): P
   return filled
 }
 
+/** Newest transcript lines for a session, oldest → newest (GLM string context). */
+async function recentTranscriptTail(clientId: string, sessionId: string, count = 24): Promise<string[]> {
+  const rows = await restSelect<{ text: string }>('transcript_segments', {
+    client_id: `eq.${clientId}`,
+    session_id: `eq.${sessionId}`,
+    select: 'text',
+    order: 'created_at.desc,id.desc',
+    limit: String(count),
+  })
+  return rows.map((row) => row.text).reverse()
+}
+
 /**
  * The fill_strings POST mode (polish 6): the client renders the skeleton
  * draft first, then asks for the wording. One GLM call; strings persist onto
  * the fact rows (so every future compile carries them), the current draft's
  * spec is recompiled and updated in place, and the response returns the new
- * spec so the preview can fade each string in as it arrives.
+ * spec so the preview can fade each string in as it arrives. The transcript
+ * tail feeds the GLM call — without it "WHAT THE CLIENT SAID" is blank and
+ * every string lands as generic copy.
  */
 async function handleFillStrings(
   clientId: string,
@@ -592,7 +621,7 @@ async function handleFillStrings(
   const slots = pendingSlots(state)
   if (slots.length === 0) return { filled: [] }
 
-  const filled = await requestStrings(slots, [])
+  const filled = await requestStrings(slots, await recentTranscriptTail(clientId, sessionId))
   const paths = Object.keys(filled)
   if (paths.length === 0) return { filled: [] }
 
@@ -674,15 +703,28 @@ function compileDraft(recipeId: RecipeId, state: FactLedgerState): { spec: Retur
 function deltaSummary(plans: AppendPlan[]): string {
   const labels: Record<string, string> = {
     'intake.photo': 'photo slot',
+    'intake.files': 'document upload',
     'intake.chat': 'free-text intake',
     'intake.form': 'details form',
+    'intake.follow_up': 'follow-up card',
     'intake.request_kind': 'request-kind picker',
     'intake.notes': 'short note field',
     'judge.decision': 'decision judge',
     'judge.escalation': 'escalation judge',
     'judge.quality': 'quality judge',
+    'judge.archetype': 'item-type judge',
+    'judge.follow_up': 'follow-up judge',
+    'judge.price_band': 'price-band judge',
     'dashboard.summary': 'summary panel',
     'dashboard.metrics': 'ops metrics',
+    'dashboard.triage_verdict': 'verdict card',
+    'dashboard.quote': 'quote panel',
+    'dashboard.thread': 'thread view',
+    'dashboard.escalation': 'escalation card',
+    'dashboard.queue': 'work queue',
+    'dashboard.alerts': 'alert feed',
+    'dashboard.kpi': 'KPI tiles',
+    'dashboard.pipeline': 'stage tracker',
   }
   const parts: string[] = []
   for (const plan of plans) {

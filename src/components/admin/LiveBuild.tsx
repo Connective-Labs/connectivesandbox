@@ -208,7 +208,7 @@ export function LiveBuild({
     if (clientIdValue === null) return
     fillPendingRef.current = true
     try {
-      const result = await fillLiveStrings(clientIdValue, sessionIdRef.current)
+      const result = await fillLiveStrings(clientIdValue, sessionIdRef.current, stateRef.current.workflowId)
       if (result.draft !== undefined) {
         acceptDraft(result.draft, clientIdValue)
         setNotice(`Draft v${result.draft.version} — wording filled in`)
