@@ -17,6 +17,8 @@ interface CapabilityCard {
 }
 
 const RECIPES: { name: string; line: string }[] = [
+  { name: 'Plan it for me', line: 'Describe the client — GLM plans the build, template and all.' },
+  { name: 'Your library', line: 'Save any build as a template; pick it up and customise for the next client.' },
   { name: 'Photo triage', line: 'Photos in, triage out, human escalation.' },
   { name: 'Document intake review', line: 'Claims and compliance packs, reviewed on arrival.' },
   { name: 'Operations desk', line: 'Tickets and orders on one queue, two buttons.' },
@@ -53,6 +55,7 @@ const GOOD_TO_KNOW = [
   'Client data stays scoped to that client — one client never sees another’s anything.',
   'Every AI change passes through you (the rep) before it reaches the client. Nothing ships itself.',
   'Live transcription builds as you talk: record the discovery call and the draft takes shape while you speak.',
+  'Templates keep their curated copy; instantiating always starts with a fresh name and description for the new client.',
 ]
 
 export function CapabilitiesGuide() {

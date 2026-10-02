@@ -22,10 +22,25 @@ export type FactArea = 'intake' | 'judges' | 'dashboard'
  * Human-language strings cached on a fact (GLM fills these for NEWLY created
  * elements only; existing elements are never re-written — draft stability).
  * Slot names are element-scoped: `label`, `instructions`, `placeholder`,
- * `opening_message`, `question`, `title`.
+ * `opening_message`, `question`, `title`, plus the wave-module slots
+ * `capture_hint` (photo_slot), `basis` (quote_panel), and `contact` /
+ * `reason` / `action_label` (escalation_card, alert_feed).
  */
 export type FactStrings = Partial<
-  Record<'label' | 'instructions' | 'placeholder' | 'opening_message' | 'question' | 'title', string>
+  Record<
+    | 'label'
+    | 'instructions'
+    | 'placeholder'
+    | 'opening_message'
+    | 'question'
+    | 'title'
+    | 'capture_hint'
+    | 'basis'
+    | 'contact'
+    | 'reason'
+    | 'action_label',
+    string
+  >
 >
 
 /** Closed-vocabulary extras carried on a fact (never free-form structure). */

@@ -1,0 +1,41 @@
+# CI (Phase 4): lint, strict type-check + build, and the headless verify
+# layer — all runnable without secrets. The hosted e2e suites (modules /
+# feedback / live-transcribe / plan) stay captain-run: they need the
+# firstmate config store. Branch model: work lands via PRs; never push main.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 23
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check + production build
+        run: npm run build
+
+      - name: Fact-ledger verification
+        run: node scripts/verify-fact-ledger.mjs
+
+      - name: Builder spec + template verification
+        run: node scripts/verify-builder-spec.mjs
+
+      - name: Wave modules verification
+        run: node --experimental-strip-types scripts/verify-wave-modules.mts

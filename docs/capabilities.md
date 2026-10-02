@@ -1,17 +1,27 @@
 # What Connective Sandbox can do
 
 A plain-language guide for reps and prospects. Paste it verbatim into an email
-or a walkthrough. Last updated: polish 6.
+or a walkthrough. Last updated: Phase 3 (template library + planner).
 
-## Start from a recipe
+## Plan it for me
 
-You never start from a blank page. Pick a named pattern, tell the builder the
-specifics in brackets, and it assembles the workflow:
+Describe the client in a few lines — GLM plans the build: which template to
+start from, which modules it needs, the wording to customise for this client,
+and what is still open. You review the plan, test the draft, and publish.
+Nothing ships itself.
 
-- **Photo triage** — photos in, triage out, human escalation.
-- **Document intake review** — claims and compliance packs, reviewed on arrival.
-- **Operations desk** — tickets and orders on one queue, two buttons.
-- **Approval desk** — applications judged for eligibility and risk.
+## Start from a recipe or the library
+
+You never start from a blank page:
+
+- **Plan it for me** — GLM plans the whole build from a short brief (and any
+  recent recorded discovery call).
+- **Named recipes** — Photo triage, Document intake review, Operations desk,
+  Approval desk.
+- **Your library** — every workflow can be saved as a reusable template.
+  Pick one, tweak the client-specific copy (names, price bands, capture
+  hints), and it becomes the new client's workflow. Improved builds save back
+  as new template versions, so the library gets better with every client.
 
 ## The modules
 

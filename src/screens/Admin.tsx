@@ -9,7 +9,9 @@ import { motion } from 'framer-motion'
 import { Building2, Check, ChevronDown, Pencil, Send, Trash2, Workflow, X } from 'lucide-react'
 
 import AppTopBar from '@/components/AppTopBar'
-import { RecipePicker } from '@/components/admin/RecipePicker'
+import { RecipePicker, type TemplateInstantiateRequest } from '@/components/admin/RecipePicker'
+import { SaveTemplateModal } from '@/components/admin/SaveTemplateModal'
+import { CloneWorkflowModal } from '@/components/admin/CloneWorkflowModal'
 import { LiveBuild } from '@/components/admin/LiveBuild'
 import { CapabilitiesGuide } from '@/components/admin/CapabilitiesGuide'
 import { Inbox } from '@/components/admin/Inbox'
@@ -22,6 +24,7 @@ import { useStickToBottom } from '@/components/chat/useStickToBottom'
 import { CollapsibleRail } from '@/components/ui/CollapsibleRail'
 import { Badge, Eyebrow, GhostButton, PrimaryButton, Skeleton } from '@/components/ui/Primitives'
 import { safeParseWorkflowSpec } from '@/engine/schema'
+import { specDiffSummary } from '@/engine/diff'
 import type { WorkflowSpec } from '@/engine/types'
 import {
   createClient,
@@ -32,7 +35,11 @@ import {
 } from '@/data/adapters/clients'
 import { markDraftPublished } from '@/data/adapters/live'
 import { listFeedbackThreads } from '@/data/adapters/feedback'
+import { instantiateTemplate, saveTemplateFromWorkflow } from '@/data/adapters/templates'
+import { planWorkflow } from '@/data/adapters/plan'
+import { planToMarkdown } from '@/engine/plan'
 import {
+  cloneWorkflowTo,
   createWorkflow,
   deleteWorkflow,
   getWorkflowSpec,
@@ -245,6 +252,9 @@ export default function Admin() {
   const [draft, setDraft] = useState('')
   const [chatPending, setChatPending] = useState(false)
   const composerRef = useRef<HTMLInputElement>(null)
+  const chatAbortRef = useRef<AbortController | null>(null)
+  const draftRef = useRef('')
+  draftRef.current = draft
 
   // Builder chat sticks to the newest message (send, streamed tokens,
   // history load) unless the user deliberately scrolls up.
@@ -270,12 +280,15 @@ export default function Admin() {
   const [newClientOpen, setNewClientOpen] = useState(false)
   const [newClientName, setNewClientName] = useState('')
   const [newClientCode, setNewClientCode] = useState('')
+  const [newClientError, setNewClientError] = useState<string | null>(null)
   const [renamingClientId, setRenamingClientId] = useState<string | null>(null)
   const [clientRenameValue, setClientRenameValue] = useState('')
   const [confirmingClientId, setConfirmingClientId] = useState<string | null>(null)
   // Guided creation (polish 5): New workflow opens the recipe picker; the
   // rail starts pinned so the client/workflow lists are visible un-hovered.
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [cloneOpen, setCloneOpen] = useState(false)
   const [railPinned, setRailPinned] = useState(true)
   const [renamingWorkflowId, setRenamingWorkflowId] = useState<string | null>(null)
   const [workflowRenameValue, setWorkflowRenameValue] = useState('')
@@ -388,11 +401,20 @@ export default function Admin() {
     }
     let active = true
     void getBuilderHistory(chatKey).then((history) => {
-      if (active) setMessages(history)
+      if (!active) return
+      setMessages(history)
+      // Seed durability (Phase 4): a recipe seed survives tab/workflow
+      // switches — restore it while the build has not started yet.
+      const workflowId = selectedWorkflowId
+      if (workflowId !== null && history.length <= 1) {
+        const seed = window.localStorage.getItem(`cs_seed_${workflowId}`)
+        if (seed !== null && draftRef.current.trim().length === 0) setDraft(seed)
+      }
     })
     return () => {
       active = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatKey])
 
   const validation = useMemo<SpecValidation>(() => {
@@ -432,11 +454,23 @@ export default function Admin() {
     const name = newClientName.trim()
     const code = newClientCode.trim()
     if (name.length === 0 || !/^\d{4}$/.test(code)) return
-    const client = await createClient(name, code)
-    setNewClientOpen(false)
-    setNewClientName('')
-    setNewClientCode('')
-    await reloadClients(client.id)
+    try {
+      const client = await createClient(name, code)
+      setNewClientOpen(false)
+      setNewClientName('')
+      setNewClientCode('')
+      setNewClientError(null)
+      await reloadClients(client.id)
+    } catch (error) {
+      // Most likely a duplicate four-digit code (unique constraint) — the
+      // form stays open with the reason instead of failing silently.
+      const message = (error as Error).message
+      setNewClientError(
+        /duplicate|unique/i.test(message)
+          ? `The code ${code} is already in use — pick another four-digit code.`
+          : `Could not create the client — ${message}`,
+      )
+    }
   }
 
   const submitClientRename = async (clientId: string) => {
@@ -463,6 +497,8 @@ export default function Admin() {
     await reloadWorkflows(selectedClientId, workflow.id)
     if (seed !== null) {
       setDraft(seed)
+      // Seed durability (Phase 4): survive tab/workflow switches until sent.
+      window.localStorage.setItem(`cs_seed_${workflow.id}`, seed)
       composerRef.current?.focus()
     }
   }
@@ -473,6 +509,66 @@ export default function Admin() {
     const spec = await getWorkflowSpec(selectedWorkflowId)
     const workflow = await createWorkflow(selectedClientId, `${selectedWorkflow.name} copy`, spec)
     await reloadWorkflows(selectedClientId, workflow.id)
+  }
+
+  // Template library (Phase 2): instantiate a saved build for this client,
+  // or save the current published workflow into the library.
+  const handleInstantiate = async (request: TemplateInstantiateRequest) => {
+    if (selectedClientId === null) throw new Error('Select a client first')
+    const result = await instantiateTemplate(request.templateId, selectedClientId, request.name, {
+      description: request.description,
+      slotValues: request.slotValues,
+    })
+    setPickerOpen(false)
+    await reloadWorkflows(selectedClientId, result.workflow.id)
+    setPublishedMessage(`Created “${result.workflow.name}” from the template — review and publish.`)
+    window.setTimeout(() => setPublishedMessage(null), 4000)
+  }
+
+  const handleSaveTemplate = async (name: string, asVersionOf: string | null) => {
+    if (selectedWorkflowId === null) throw new Error('No workflow selected')
+    const template = await saveTemplateFromWorkflow(selectedWorkflowId, name, asVersionOf ?? undefined)
+    setSaveTemplateOpen(false)
+    setPublishedMessage(
+      `Saved “${template.name}” to the library${asVersionOf !== null ? ` as v${template.version}` : ''}.`,
+    )
+    window.setTimeout(() => setPublishedMessage(null), 4000)
+  }
+
+  const handleClone = async (targetClientId: string, name: string) => {
+    if (selectedWorkflowId === null) throw new Error('No workflow selected')
+    const workflow = await cloneWorkflowTo(selectedWorkflowId, targetClientId, name)
+    setCloneOpen(false)
+    setPublishedMessage(`Copied “${workflow.name}” — select the target client to review and publish.`)
+    window.setTimeout(() => setPublishedMessage(null), 4000)
+  }
+
+  // GLM planning stage (Phase 3): brief in — a new workflow, a compiled draft,
+  // and a plan card in the builder transcript come out. The rep stays the gate.
+  const handlePlan = async (brief: string) => {
+    if (selectedClientId === null) throw new Error('Select a client first')
+    const workflow = await createWorkflow(selectedClientId, 'Planned workflow', null)
+    await reloadWorkflows(selectedClientId, workflow.id)
+    const result = await planWorkflow(workflow.id, selectedClientId, brief)
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: `bc_plan_${Date.now()}`,
+        role: 'assistant' as const,
+        content: planToMarkdown(result.plan),
+        at: new Date().toISOString(),
+        spec: result.draft.spec,
+      },
+    ])
+    if (result.plan.open_questions.length > 0) {
+      setDraft(
+        `Open questions to settle:\n${result.plan.open_questions.map((question) => `- ${question}`).join('\n')}\n\n`,
+      )
+      composerRef.current?.focus()
+    }
+    setPickerOpen(false)
+    setPublishedMessage('Plan ready — load the draft into the preview and publish when happy.')
+    window.setTimeout(() => setPublishedMessage(null), 4000)
   }
 
   const submitWorkflowRename = async (workflowId: string) => {
@@ -516,6 +612,8 @@ export default function Admin() {
     const content = draft.trim()
     if (content.length === 0 || chatPending || chatKey === null || selectedWorkflowId === null) return
     setDraft('')
+    // The recipe seed is consumed once the rep sends it.
+    window.localStorage.removeItem(`cs_seed_${selectedWorkflowId}`)
     const userMessage: BuilderChatMessage = {
       id: `bc_${Date.now()}`,
       role: 'user',
@@ -526,7 +624,10 @@ export default function Admin() {
     setChatPending(true)
     void (async () => {
       // Streamed reply from the admin-chat gateway (GLM-5.3-Flash, spec
-      // validated server-side against the frozen Zod schema).
+      // validated server-side against the frozen Zod schema). The turn is
+      // cancellable — a build round can run for minutes.
+      const abort = new AbortController()
+      chatAbortRef.current = abort
       const assistantMessage: BuilderChatMessage = {
         id: `bc_${Date.now()}_assistant`,
         role: 'assistant',
@@ -543,7 +644,14 @@ export default function Admin() {
               message.id === assistantMessage.id ? { ...message, content: streamed } : message,
             ),
           )
-        })
+        }, abort.signal)
+        // Plain-language diff vs the currently loaded spec, so the rep sees
+        // what a new proposal changes before loading it.
+        const previousSpec = validation.state === 'valid' ? validation.spec : null
+        const diffSummary =
+          result.spec !== null && previousSpec !== null
+            ? specDiffSummary(previousSpec, result.spec)
+            : []
         setMessages((previous) =>
           previous.map((message) =>
             message.id === assistantMessage.id
@@ -551,6 +659,7 @@ export default function Admin() {
                   ...message,
                   content: result.content,
                   ...(result.spec !== null ? { spec: result.spec } : {}),
+                  ...(diffSummary.length > 0 ? { diffSummary } : {}),
                   ...(result.validationError !== null
                     ? { content: `${result.content}\n\nSpec validation: ${result.validationError}` }
                     : {}),
@@ -559,13 +668,15 @@ export default function Admin() {
           ),
         )
       } catch (error) {
+        const cancelled = abort.signal.aborted
         setMessages((previous) =>
           previous.map((message) =>
             message.id === assistantMessage.id
               ? {
                   ...message,
-                  content:
-                    streamed.length > 0
+                  content: cancelled
+                    ? `${streamed}${streamed.length > 0 ? '\n\n' : ''}_Turn cancelled._`
+                    : streamed.length > 0
                       ? `${streamed}\n\n${(error as Error).message}`
                       : (error as Error).message,
                 }
@@ -573,9 +684,14 @@ export default function Admin() {
           ),
         )
       } finally {
+        chatAbortRef.current = null
         setChatPending(false)
       }
     })()
+  }
+
+  const cancelChat = () => {
+    chatAbortRef.current?.abort()
   }
 
   const publish = async () => {
@@ -609,20 +725,37 @@ export default function Admin() {
         <div className="mt-2 space-y-1.5 rounded-lg border border-slate-200 bg-white p-2">
           <InlineInput
             value={newClientName}
-            onChange={setNewClientName}
+            onChange={(value) => {
+              setNewClientName(value)
+              setNewClientError(null)
+            }}
             placeholder="Client name"
             ariaLabel="New client name"
             onSubmit={submitNewClient}
-            onCancel={() => setNewClientOpen(false)}
+            onCancel={() => {
+              setNewClientOpen(false)
+              setNewClientError(null)
+            }}
           />
           <InlineInput
             value={newClientCode}
-            onChange={setNewClientCode}
+            onChange={(value) => {
+              setNewClientCode(value)
+              setNewClientError(null)
+            }}
             placeholder="Four-digit code"
             ariaLabel="New client four-digit access code"
             onSubmit={submitNewClient}
-            onCancel={() => setNewClientOpen(false)}
+            onCancel={() => {
+              setNewClientOpen(false)
+              setNewClientError(null)
+            }}
           />
+          {newClientError !== null && (
+            <p role="alert" className="px-1 text-xs font-medium text-red-600">
+              {newClientError}
+            </p>
+          )}
         </div>
       )}
       <div className="mt-3 space-y-1">
@@ -966,6 +1099,20 @@ export default function Admin() {
                   ) : (
                     <span className="block whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</span>
                   )}
+                  {message.diffSummary !== undefined && message.diffSummary.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+                        Changes vs current spec
+                      </p>
+                      <ul className="mt-1 space-y-0.5">
+                        {message.diffSummary.map((change) => (
+                          <li key={change} className="text-xs text-slate-600">
+                            {change}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {message.spec !== undefined && (
                     <SpecBlock spec={message.spec} onLoad={loadSpecIntoPreview} />
                   )}
@@ -985,29 +1132,47 @@ export default function Admin() {
               sendChat()
             }}
           >
-            <input
-              ref={composerRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Describe the workflow…"
-              aria-label="Message the builder"
-              disabled={chatPending}
-              className="min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-accent focus:outline-none disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={chatPending || draft.trim().length === 0}
-              aria-label="Send message"
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition',
-                draft.trim().length > 0
-                  ? 'border-accent bg-accent text-white hover:bg-accent-hover active:bg-accent-pressed'
-                  : 'border-slate-300 bg-white text-slate-400',
-                'disabled:cursor-not-allowed disabled:opacity-40',
+            <div className="min-w-0 flex-1">
+              <input
+                ref={composerRef}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder="Describe the workflow…"
+                aria-label="Message the builder"
+                disabled={chatPending}
+                className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-ink placeholder:text-slate-400 focus:border-accent focus:outline-none disabled:opacity-50"
+              />
+              {/\[[^\]]*\]/.test(draft) && !chatPending && (
+                <p role="status" className="mt-1 px-4 text-xs font-medium text-accent">
+                  Fill in the bracketed specifics before sending.
+                </p>
               )}
-            >
-              <Send size={16} aria-hidden="true" />
-            </button>
+            </div>
+            {chatPending ? (
+              <button
+                type="button"
+                onClick={cancelChat}
+                aria-label="Cancel the current turn"
+                className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-500 transition hover:border-red-300 hover:text-red-600"
+              >
+                <X size={13} aria-hidden="true" /> Cancel
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={draft.trim().length === 0}
+                aria-label="Send message"
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition',
+                  draft.trim().length > 0
+                    ? 'border-accent bg-accent text-white hover:bg-accent-hover active:bg-accent-pressed'
+                    : 'border-slate-300 bg-white text-slate-400',
+                  'disabled:cursor-not-allowed disabled:opacity-40',
+                )}
+              >
+                <Send size={16} aria-hidden="true" />
+              </button>
+            )}
           </form>
           <p className="shrink-0 pb-2.5 text-center text-xs font-semibold uppercase tracking-widest text-slate-400">
             GLM 5.3 Flash
@@ -1129,7 +1294,7 @@ export default function Admin() {
             </div>
           </div>
 
-          <div className="shrink-0 border-t border-slate-200 px-4 py-3">
+          <div className="shrink-0 space-y-2 border-t border-slate-200 px-4 py-3">
             <PrimaryButton
               onClick={() => void publish()}
               disabled={validation.state !== 'valid'}
@@ -1137,8 +1302,15 @@ export default function Admin() {
             >
               Publish to Client
             </PrimaryButton>
+            <GhostButton
+              onClick={() => setSaveTemplateOpen(true)}
+              disabled={validation.state !== 'valid' || selectedWorkflowId === null}
+              className="w-full"
+            >
+              Save as template
+            </GhostButton>
             {publishedMessage !== null && (
-              <p role="status" className="mt-2 text-xs font-medium text-emerald-700">
+              <p role="status" className="text-xs font-medium text-emerald-700">
                 {publishedMessage}
               </p>
             )}
@@ -1153,6 +1325,23 @@ export default function Admin() {
         onClose={() => setPickerOpen(false)}
         onCreate={(name, seed) => void createFromRecipe(name, seed)}
         onDuplicate={() => void duplicateCurrentWorkflow()}
+        onInstantiate={handleInstantiate}
+        onPlan={handlePlan}
+        onClone={() => setCloneOpen(true)}
+      />
+      <SaveTemplateModal
+        open={saveTemplateOpen}
+        workflowName={selectedWorkflow?.name ?? null}
+        onClose={() => setSaveTemplateOpen(false)}
+        onSave={handleSaveTemplate}
+      />
+      <CloneWorkflowModal
+        open={cloneOpen}
+        workflowName={selectedWorkflow?.name ?? null}
+        clients={clients}
+        currentClientId={selectedClientId}
+        onClose={() => setCloneOpen(false)}
+        onClone={handleClone}
       />
     </div>
   )

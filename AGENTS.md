@@ -236,8 +236,9 @@ dependencies beyond the standard scaffold set without a captain decision.
   recording cross-browser: MediaRecorder capture → sequential self-contained
   chunks → text only returns. Both engines sit behind the ONE
   `TranscriptionEngine` interface in `src/data/adapters/transcribe.ts`
-  (`chooseEngine()`: server when `DEEPGRAM_API_KEY` is present — it is NOT
-  yet provisioned (reason 'secret_pending'), Web Speech fallback). No audio
+  (`chooseEngine()`: server when a `GET /live-transcribe` probe reports
+  available — 503 while `DEEPGRAM_API_KEY` is unprovisioned — Web Speech
+  fallback). No audio
   stored anywhere. Captions render ONE growing transcript with word-level
   fades; previews animate only the delta (stable element ids + mount
   animations; compiled specs are byte-stable for unchanged state).
@@ -345,6 +346,149 @@ dependencies beyond the standard scaffold set without a captain decision.
 - **Capabilities guide.** In-product: `src/components/admin/CapabilitiesGuide.tsx`
   (collapsible "What can I build?" card set above the centre tabs). Repo doc:
   `docs/capabilities.md` — keep the two in step when recipes/modules change.
+
+## Hardening 1 — bug sweep + live-build wave parity
+
+- **Builder history window fixed.** `admin-chat` fetched messages ASC with
+  `limit 24` — PostgREST applies limit AFTER order, so long conversations fed
+  the model the OLDEST rows and hid the newest turn. Now desc + reverse.
+- **fill_strings keeps its recipe.** The parallel string pass now sends
+  `workflow_id` (recipe inference matches the draft compile — the generic
+  recompile that dropped recipe seeds is gone) and feeds the GLM call the
+  session's transcript tail instead of an empty context.
+- **Feedback planner sees the wave modules.** `_shared/planner.ts` covers all
+  intake kinds + addable panels (escalation_card, kpi_tiles, pipeline_tracker,
+  status_queue, alert_feed, confidence_meter, analysis, monitoring); wave
+  string slots are rewordable everywhere. triage_verdict / quote_panel /
+  thread_preview are reword-ONLY (judge-bound, not auto-addable).
+  decision_log + usage_counter are ALWAYS-ON — never planner-removable.
+  `applyProposal` deep-clones panels (nested rows/lines/alerts mutate in
+  place).
+- **Live build compiles the waves.** `intake.photo` → keyed `photo_slot`
+  (judge-state key `photos`), `intake.files` → generic `file_upload`
+  (document-intake), `intake.follow_up` → `follow_up_card`. New judges
+  `judge.archetype` / `judge.follow_up` / `judge.price_band` with closed sets;
+  new decision sets `route` + `price_band`. `operations-desk` is a REAL
+  recipe (queue/alerts/kpi/pipeline/escalation panels) — the approval-desk
+  alias is GONE; `normaliseRecipeId('operations-desk')` returns itself.
+  Option-fact narrowing (`judge.decision.options.<opt>`) still applies only to
+  the decision judge; the new choice judges compile their full closed sets.
+- **Shared spec validation.** `extractSpecJson`/`validateSpec` live in
+  `_shared/spec-validate.ts` (pure, importable by Edge Functions AND Node).
+- **Headless verify layer (no secrets, CI-runnable).**
+  `node scripts/verify-fact-ledger.mjs` (13 assertions, wave parity included),
+  `node scripts/verify-builder-spec.mjs` (extraction/validation/applier,
+  no-mutation guarantee), `node --experimental-strip-types
+  scripts/verify-wave-modules.mts`. Run all three after engine changes.
+- **Small fixes:** publish syncs the workflow row's `name` from `spec.name`;
+  duplicate 4-digit client codes surface an inline error (unique constraint
+  swallowed silently before); dead code removed (`appendBuilderMessage`,
+  `getUsageSnapshot` + the `/usage/snapshot` route, `fetchLiveLedger`,
+  `UsageSnapshot`); README deploy list covers all 11 functions and the full
+  secret list; `docs/modules.md` transcript-ready section reflects shipped
+  reality.
+
+## Phase 2 — Reusable template library
+
+- **Templates are whole-workflow assets.** `workflow_templates` (migration
+  20261002000000) stores the curated spec, `category` (recipe id or 'custom'),
+  `version`, lineage (`parent_template_id` chains versions,
+  `created_from_workflow_id` records provenance), and `slots` — the
+  parameterisation list from `src/engine/templating.ts`. Workflows gain
+  `source_template_id` + `source_template_version` (provenance per build).
+  Gateway RLS: RLS on, NO policies — service_role inside admin-api only.
+- **`src/engine/templating.ts` is the parameterisation layer.** `templateSlots`
+  walks EVERY rewordable display string (canonical walk shared with the
+  feedback planner — planner's `stringSlots` delegates) plus every judge
+  threshold, each with the source value as `example`. `applySlotValues`
+  applies rep-edited values deterministically: unknown paths ignored, strings
+  length-bounded, thresholds clamp to ±0.1 of the example inside the global
+  band (review < auto enforced), input never mutated.
+- **Templates keep their curated copy; instantiation is identity-safe.** The
+  instantiate form REQUIRES a fresh name/description (defaults never carry
+  another client's name); other slots pre-fill from examples and only CHANGED
+  values travel. The frozen Zod schema gates every instantiation in admin-api.
+- **Curated seeds self-heal.** `GET /admin-api/templates` upserts the four
+  recipe baselines compiled from the catalogue (drift → version bump, so
+  workflows record which revision they came from). No migration-embedded
+  spec JSON — the catalogue stays the single source of truth.
+- **admin-api templates resource** (admin-only): list (with usage counts),
+  get, save-as-template (`POST /templates {workflow_id, name?, as_version_of?}`),
+  instantiate (`POST /templates/:id/instantiate`), delete (curated protected).
+  admin-api now imports the engine + Zod — the import map is wired in
+  config.toml for it.
+- **UI.** RecipePicker gains the Library section (saved templates with
+  version + usage; picking opens the grouped slot form —
+  `TemplateFlow.tsx`). "Save as template" sits beside Publish
+  (`SaveTemplateModal.tsx`, version-of dropdown for lineage). Instantiate
+  creates the workflow at version 1 and rides the normal Test/Publish gate.
+- **Verify.** `node scripts/verify-builder-spec.mjs` now covers
+  `templateSlots` coverage, exact/non-mutating/deterministic application,
+  bound-clamping, and a fully-customised Zod-valid round-trip.
+
+## Phase 3 — GLM planning stage (plan-workflow)
+
+- **The planner decides WHAT, never HOW.** `src/engine/plan.ts` holds the
+  Zod-validated `WorkflowPlan` (headline, rationale, template choice, module
+  sanity list, slot-keyed customisations with a one-line why, open questions)
+  and `planToMarkdown` for the transcript card. The model NEVER emits a spec:
+  `plan-workflow` compiles the chosen template through `applySlotValues`, so
+  only real slot keys apply and the frozen Zod schema gates the result.
+- **`plan-workflow` Edge Function** (import_map wired in config.toml):
+  admin-only; rate guard counted durably from `spec_drafts` source='plan'
+  (`PLAN_MAX_PER_HOUR`, default 10); context = client name + existing
+  workflows ("do not duplicate") + up to 8 template candidates WITH slot keys
+  (so every customisation names a real slot) + transcript tail. Transcript
+  auto-attaches from the client's most recent call within 7 days — no picker.
+  ONE GLM-5.3-Flash call (`PLAN_REASONING_EFFORT`, default 'low' — the
+  compile is deterministic and rep-gated, speed wins), max 3 self-correction
+  rounds. Failure of a template id match falls back to the generic baseline
+  (a draft is never rejected).
+- **Persistence.** Draft rides `spec_drafts` (source='plan', the validated
+  plan in the new `plan` jsonb column, migration 20261002000001); the
+  workflow row's name/description sync from the compiled spec so the rail
+  reads well before publish. Response `{plan, draft, applied}`.
+- **Builder chat is now spec-aware.** `admin-chat` injects CURRENT CONTEXT
+  (workflow name + stored spec, placeholder specs contribute nothing) into
+  the system prompt — "add a field" edits reality instead of regenerating
+  from prose memory.
+- **UI.** "Plan it for me" is the recommended first card in RecipePicker →
+  brief step → the parent creates the workflow, plans into it, appends the
+  plan card to the builder transcript (markdown, compiled draft attached —
+  the existing "Load into preview" flow is the Test action), and pre-fills
+  the composer with the open questions for Refine-in-chat.
+- **E2E.** `supabase/tests/plan-e2e.sh` (prefix `__plan_e2e_*`): curated
+  self-seed, save-as-template + v2 lineage, cross-client instantiate with
+  slot application + provenance + identity safety, GLM plan → valid compiled
+  draft, gateway isolation. Cleanup order matters (FKs): null
+  `workflows.source_template_id` → null/drop templates → cascade clients.
+  NOTE: `workflow_templates.created_from_workflow_id` references workflows
+  WITHOUT cascade — deleting a client fails while a template points at its
+  workflow; cleanup must null it first.
+
+## Phase 4 — Automation & polish
+
+- **Cancellable builder turns.** `streamFunction` takes a `{signal}`; the
+  composer swaps Send for Cancel while a turn runs (`chatAbortRef`) and a
+  cancelled turn appends "_Turn cancelled._" — no composer lockup on a hung
+  gateway call.
+- **Plain-language spec diff.** `src/engine/diff.ts` (`specDiffSummary`,
+  pure, deterministic): when a chat reply carries a spec AND a valid spec is
+  loaded, the message renders a "Changes vs current spec" card above its
+  SpecBlock (adds/removals by labelled id, threshold nudges, wording note).
+- **Recipe seeds are durable.** `createFromRecipe` persists the seed under
+  `cs_seed_<workflowId>`; the history effect restores it while the build has
+  not started (history ≤ greeting); sending clears it. Unfilled brackets in
+  the composer show a "fill the bracketed specifics" hint.
+- **Raw cross-client clone.** `POST /admin-api/workflows/:id/clone
+  {target_client_id, name}` — the quick "same build, different client"; the
+  curated path remains save-as-template + instantiate. UI: picker footer
+  "Copy to another client…" → `CloneWorkflowModal` (client select + name).
+- **CI.** `.github/workflows/ci.yml`: lint + strict build + all three
+  headless verify scripts on every PR/branch push. The hosted e2e suites
+  stay captain-run (they need the firstmate config store). Cut-line item NOT
+  built: the "template vN+1 available" badge on workflows instantiated from
+  older template versions (provenance columns already record it).
 
 ## Brand
 

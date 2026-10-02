@@ -100,12 +100,14 @@ export interface StreamResult {
 /**
  * POST an Edge Function and consume its SSE reply, invoking onDelta for each
  * content chunk. Same-origin + credentials so the session cookie rides along
- * (see the note on callFunction).
+ * (see the note on callFunction). Pass a signal to let the UI cancel a turn —
+ * the fetch rejects with an AbortError the caller can recognise.
  */
 export async function streamFunction(
   path: string,
   body: unknown,
   onDelta: (delta: string) => void,
+  options: { signal?: AbortSignal } = {},
 ): Promise<StreamResult> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' }
   if (ANON_KEY.length > 0) headers.apikey = ANON_KEY
@@ -115,6 +117,7 @@ export async function streamFunction(
     headers,
     credentials: 'include',
     body: JSON.stringify(body),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
   })
 
   if (!response.ok) {

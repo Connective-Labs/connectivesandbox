@@ -18,6 +18,8 @@ export interface BuilderChatMessage {
   at?: string
   /** Raw spec payload attached to assistant messages that propose a workflow. */
   spec?: WorkflowSpec
+  /** Plain-language structural diff vs the previously loaded spec (Phase 4). */
+  diffSummary?: string[]
 }
 
 interface SessionRow {
@@ -76,13 +78,6 @@ export async function getBuilderHistory(key: string): Promise<BuilderChatMessage
   }))
 }
 
-/** Server-side persistence replaced the local store — kept for signature parity. */
-export function appendBuilderMessage(_key: string, _message: BuilderChatMessage): void {
-  // The admin-chat Edge Function persists user + assistant messages.
-  void _key
-  void _message
-}
-
 export interface BuilderSendResult {
   content: string
   /** The validated spec, when the reply contained one. */
@@ -96,6 +91,7 @@ export async function sendBuilderMessage(
   workflowId: string,
   content: string,
   onDelta: (delta: string) => void,
+  signal?: AbortSignal,
 ): Promise<BuilderSendResult> {
   let full = ''
   const { done } = await streamFunction(
@@ -105,6 +101,7 @@ export async function sendBuilderMessage(
       full += delta
       onDelta(delta)
     },
+    signal !== undefined ? { signal } : {},
   )
   const spec = (done?.spec ?? null) as WorkflowSpec | null
   return {

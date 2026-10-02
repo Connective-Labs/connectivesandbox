@@ -1,8 +1,9 @@
-// Guided workflow creation (polish 5). "New workflow" opens this picker —
-// one card per named recipe from docs/modules.md, plus "Something else" for a
-// plain chat. Picking a recipe creates the workflow and pre-fills the builder
-// chat with a first message naming the client and the business pattern, so
-// the internal person only edits the bracketed specifics and sends.
+// Guided workflow creation (polish 5, library in Phase 2). "New workflow"
+// opens this picker — one card per named recipe from docs/modules.md, the
+// reusable template library, and "Something else" for a plain chat. Picking a
+// recipe creates the workflow and pre-fills the builder chat with a first
+// message naming the client and the business pattern; picking a library
+// template opens the slot form and instantiates a real workflow.
 //
 // Extending: add an entry to RECIPES. Nothing else needs to change — the
 // list IS the picker. Recipes must stay aligned with the named recipes in
@@ -10,10 +11,12 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare, MonitorCheck } from 'lucide-react'
+import { Camera, ClipboardCheck, Copy, FileText, MessagesSquare, MonitorCheck, Sparkles } from 'lucide-react'
 
 import { GhostButton, PrimaryButton } from '@/components/ui/Primitives'
+import { TemplateInstantiateForm, TemplateLibraryGrid } from '@/components/admin/TemplateFlow'
 import { cn } from '@/lib/utils'
+import { listTemplates, type WorkflowTemplate } from '@/data/adapters/templates'
 
 export interface BuilderRecipe {
   id: 'photo-triage' | 'operations-desk' | 'document-intake' | 'approval-desk' | 'something-else'
@@ -30,6 +33,12 @@ export interface BuilderRecipe {
   seed: (clientName: string | null) => string | null
 }
 
+export interface TemplateInstantiateRequest {
+  templateId: string
+  name: string
+  description: string
+  slotValues: Record<string, string | number>
+}
 export const RECIPES: readonly BuilderRecipe[] = [
   {
     id: 'photo-triage',
@@ -103,6 +112,9 @@ export function RecipePicker({
   onClose,
   onCreate,
   onDuplicate,
+  onInstantiate,
+  onPlan,
+  onClone,
 }: {
   open: boolean
   clientName: string | null
@@ -111,12 +123,44 @@ export function RecipePicker({
   /** Create the workflow, then pre-fill the builder chat with the seed. */
   onCreate: (name: string, seed: string | null) => void
   onDuplicate: () => void
+  /** Instantiate a library template with rep-customised slot values.
+   *  Throws on failure (the error surfaces in the form); the parent closes
+   *  the picker on success. */
+  onInstantiate: (request: TemplateInstantiateRequest) => Promise<void>
+  /** GLM planning stage: brief in, plan + compiled draft into the builder.
+   *  Throws on failure; the parent closes the picker on success. */
+  onPlan: (brief: string) => Promise<void>
+  /** Raw cross-client copy of the current workflow (parent opens its modal). */
+  onClone: () => void
 }) {
   const [picked, setPicked] = useState<BuilderRecipe | null>(null)
   const [name, setName] = useState('')
+  const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null)
+  const [pickedTemplate, setPickedTemplate] = useState<WorkflowTemplate | null>(null)
+  const [instantiating, setInstantiating] = useState(false)
+  const [instantiateError, setInstantiateError] = useState<string | null>(null)
+  const [planMode, setPlanMode] = useState(false)
+  const [brief, setBrief] = useState('')
+  const [planning, setPlanning] = useState(false)
+  const [planError, setPlanError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!open) setPicked(null)
+    if (!open) {
+      setPicked(null)
+      setPickedTemplate(null)
+      setInstantiating(false)
+      setInstantiateError(null)
+      setPlanMode(false)
+      setBrief('')
+      setPlanning(false)
+      setPlanError(null)
+      return
+    }
+    // The library loads lazily per open; a failure leaves it hidden (the
+    // recipes remain the primary path) rather than blocking the picker.
+    void listTemplates()
+      .then((rows) => setTemplates(rows))
+      .catch(() => setTemplates([]))
   }, [open])
 
   useEffect(() => {
@@ -136,6 +180,32 @@ export function RecipePicker({
   const confirm = () => {
     if (picked === null || name.trim().length === 0) return
     onCreate(name.trim(), picked.seed(clientName))
+  }
+
+  const confirmInstantiate = async (request: TemplateInstantiateRequest) => {
+    setInstantiating(true)
+    setInstantiateError(null)
+    try {
+      await onInstantiate(request)
+    } catch (error) {
+      setInstantiateError((error as Error).message)
+    } finally {
+      setInstantiating(false)
+    }
+  }
+
+  const confirmPlan = async () => {
+    const trimmed = brief.trim()
+    if (trimmed.length === 0 || planning) return
+    setPlanning(true)
+    setPlanError(null)
+    try {
+      await onPlan(trimmed)
+    } catch (error) {
+      setPlanError((error as Error).message)
+    } finally {
+      setPlanning(false)
+    }
   }
 
   return (
@@ -161,8 +231,82 @@ export function RecipePicker({
             transition={MODAL_TRANSITION}
             onClick={(event) => event.stopPropagation()}
           >
-            {picked === null ? (
+            {planMode ? (
               <>
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                  <Sparkles size={14} aria-hidden="true" className="text-accent" />
+                  Plan it for me
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  Tell the planner about the client and the decision they make today. A recent
+                  recorded call is picked up automatically.
+                </p>
+                <div className="mt-4">
+                  <label htmlFor="plan-brief" className="sr-only">
+                    Planning brief
+                  </label>
+                  <textarea
+                    id="plan-brief"
+                    value={brief}
+                    onChange={(event) => setBrief(event.target.value)}
+                    rows={5}
+                    autoFocus
+                    placeholder={
+                      clientName !== null
+                        ? `e.g. ${clientName} clean curtains and blinds. Customers WhatsApp photos, we decide: quote now, ask one question, or visit…`
+                        : 'e.g. My client cleans curtains. Customers WhatsApp photos, we decide: quote now, ask one question, or visit…'
+                    }
+                    className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-slate-400 focus:border-accent focus:outline-none"
+                  />
+                </div>
+                {planError !== null && (
+                  <p role="alert" className="mt-2 text-xs font-medium text-red-600">
+                    {planError}
+                  </p>
+                )}
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  <GhostButton onClick={() => setPlanMode(false)}>Back</GhostButton>
+                  <PrimaryButton
+                    onClick={() => void confirmPlan()}
+                    disabled={brief.trim().length === 0 || planning}
+                    className={cn((brief.trim().length === 0 || planning) && 'opacity-50')}
+                  >
+                    {planning ? 'Planning…' : 'Plan the workflow'}
+                  </PrimaryButton>
+                </div>
+              </>
+            ) : pickedTemplate !== null ? (
+              <TemplateInstantiateForm
+                template={pickedTemplate}
+                clientName={clientName}
+                busy={instantiating}
+                error={instantiateError}
+                onBack={() => setPickedTemplate(null)}
+                onConfirm={confirmInstantiate}
+              />
+            ) : picked === null ? (
+              <>
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode(true)}
+                    className="group flex w-full items-center gap-2.5 rounded-xl border border-accent bg-accent-wash p-3 text-left transition hover:shadow-sm focus:border-accent focus:outline-none"
+                  >
+                    <Sparkles
+                      size={16}
+                      aria-hidden="true"
+                      className="shrink-0 text-accent"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-ink">
+                        Plan it for me <span className="font-normal text-slate-500">(recommended)</span>
+                      </span>
+                      <span className="mt-0.5 block text-xs leading-snug text-slate-600">
+                        Describe the client — GLM plans the build, picks the template, and customises it.
+                      </span>
+                    </span>
+                  </button>
+                </div>
                 <p className="text-sm font-semibold text-ink">Start a workflow</p>
                 <p className="mt-0.5 text-xs text-slate-400">
                   {clientName !== null
@@ -194,8 +338,14 @@ export function RecipePicker({
                     </button>
                   ))}
                 </div>
+                {templates !== null && templates.length > 0 && (
+                  <TemplateLibraryGrid
+                    templates={templates.filter((template) => !template.is_curated)}
+                    onPick={(template) => setPickedTemplate(template)}
+                  />
+                )}
                 {canDuplicate && (
-                  <div className="mt-4 border-t border-slate-100 pt-3">
+                  <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
                     <button
                       type="button"
                       onClick={() => {
@@ -206,6 +356,17 @@ export function RecipePicker({
                     >
                       <Copy size={12} aria-hidden="true" />
                       Duplicate the current workflow instead
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPicked(null)
+                        onClone()
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-accent"
+                    >
+                      <Copy size={12} aria-hidden="true" />
+                      Copy to another client…
                     </button>
                   </div>
                 )}

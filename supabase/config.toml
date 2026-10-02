@@ -429,6 +429,7 @@ verify_jwt = false
 
 [functions.admin-api]
 verify_jwt = false
+import_map = "./functions/import_map.json"
 
 # Phase 6: all four new functions manage their own cookie auth (same design
 # as auth-code/admin-api); admin-chat validates specs against the frozen Zod
@@ -467,6 +468,10 @@ import_map = "./functions/import_map.json"
 # only; drafts are compiled deterministically (src/engine/compilers.ts) and
 # validated against the frozen Zod schema — shares the admin-chat import map.
 [functions.live-facts]
+verify_jwt = false
+import_map = "./functions/import_map.json"
+
+[functions.plan-workflow]
 verify_jwt = false
 import_map = "./functions/import_map.json"
 

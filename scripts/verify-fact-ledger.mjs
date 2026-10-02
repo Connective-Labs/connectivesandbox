@@ -156,9 +156,62 @@ const duplicateIds = (spec) => {
       `${recipeId} carries the ownership trail`,
     )
   }
-  assert.equal(normaliseRecipeId('operations-desk'), 'approval-desk')
+  assert.equal(normaliseRecipeId('operations-desk'), 'operations-desk')
   assert.equal(normaliseRecipeId('nonsense'), 'generic')
-  ok('every recipe compiles a valid baseline; alias + fallback normalisation holds')
+  ok('every recipe compiles a valid baseline; operations-desk is real; fallback normalisation holds')
+}
+
+// ---------------------------------------------------------------------------
+// 5b. Wave parity: the live-build compilers emit the module waves.
+// ---------------------------------------------------------------------------
+{
+  // Photo triage — the flagship composition.
+  const photo = validate(compileSpec('photo-triage', applyFacts([])), 'photo-triage wave baseline')
+  const types = (list) => list.map((entry) => entry.type)
+  assert.ok(types(photo.intake.components).includes('photo_slot'), 'photo-triage compiles the keyed photo_slot')
+  assert.ok(types(photo.intake.components).includes('follow_up_card'), 'photo-triage compiles the follow-up card')
+  assert.ok(types(photo.intake.components).includes('chat'), 'photo-triage compiles the chat intake')
+  const panelTypes = types(photo.dashboard.panels)
+  for (const expected of ['triage_verdict', 'quote_panel', 'thread_preview', 'escalation_card', 'confidence_meter', 'decision_log', 'usage_counter']) {
+    assert.ok(panelTypes.includes(expected), `photo-triage dashboard carries ${expected}`)
+  }
+  const verdict = photo.dashboard.panels.find((panel) => panel.type === 'triage_verdict')
+  const decisionOptions = photo.judges.find((judge) => judge.id === 'decision_judge').options
+  assert.deepEqual(
+    verdict.verdicts.map((entry) => entry.value),
+    decisionOptions,
+    'triage_verdict maps every decision option',
+  )
+  const quote = photo.dashboard.panels.find((panel) => panel.type === 'quote_panel')
+  assert.equal(quote.band_judge_id, 'price_band_judge', 'quote_panel binds the price-band judge')
+  assert.deepEqual(
+    quote.bands.map((entry) => entry.value),
+    ['band_a', 'band_b', 'band_c', 'needs_visit'],
+    'quote_panel carries the closed band set',
+  )
+  const photoSlot = photo.intake.components.find((component) => component.type === 'photo_slot')
+  const thread = photo.dashboard.panels.find((panel) => panel.type === 'thread_preview')
+  assert.equal(thread.photo_slot_key, photoSlot.key, 'thread_preview binds the photo slot key')
+
+  // Operations desk — the wave-2 panel set.
+  const ops = validate(compileSpec('operations-desk', applyFacts([])), 'operations-desk wave baseline')
+  const opsPanels = types(ops.dashboard.panels)
+  for (const expected of ['status_queue', 'alert_feed', 'kpi_tiles', 'pipeline_tracker', 'escalation_card']) {
+    assert.ok(opsPanels.includes(expected), `operations-desk dashboard carries ${expected}`)
+  }
+  assert.deepEqual(
+    ops.judges.find((judge) => judge.id === 'decision_judge').options,
+    DECISION_SETS.route.options,
+    'operations-desk uses the route decision set',
+  )
+  const queue = ops.dashboard.panels.find((panel) => panel.type === 'status_queue')
+  assert.equal(queue.actions.length, 2, 'status_queue carries exactly two actions')
+
+  // Document intake — the generic upload, not the keyed photo slot.
+  const doc = validate(compileSpec('document-intake', applyFacts([])), 'document-intake wave baseline')
+  assert.ok(types(doc.intake.components).includes('file_upload'), 'document-intake compiles the generic upload')
+  assert.ok(!types(doc.intake.components).includes('photo_slot'), 'document-intake is not photo-keyed')
+  ok('wave parity: photo-triage compiles the flagship; operations-desk compiles the wave-2 panels')
 }
 
 // ---------------------------------------------------------------------------
@@ -251,19 +304,28 @@ const duplicateIds = (spec) => {
 // ---------------------------------------------------------------------------
 {
   const brokenStrings = [
-    fact('intake.photo', 'add', 1, { strings: { label: '', instructions: '   ' } }),
-    fact('intake.chat', 'add', 2, { strings: {} }),
-    fact('judge.decision', 'add', 3, { strings: { question: '' } }),
-    fact('judge.escalation', 'add', 4),
-    fact('judge.quality', 'add', 5, { strings: { question: '  ' } }),
-    fact('dashboard.summary', 'add', 6, { strings: { title: '' } }),
+    fact('intake.photo', 'add', 1, { strings: { label: '', capture_hint: '   ' } }),
+    fact('intake.files', 'add', 2, { strings: { label: '', instructions: '  ' } }),
+    fact('intake.chat', 'add', 3, { strings: {} }),
+    fact('judge.decision', 'add', 4, { strings: { question: '' } }),
+    fact('judge.escalation', 'add', 5),
+    fact('judge.quality', 'add', 6, { strings: { question: '  ' } }),
+    fact('judge.price_band', 'add', 7, { strings: { question: ' ' } }),
+    fact('dashboard.summary', 'add', 8, { strings: { title: '' } }),
+    fact('dashboard.quote', 'add', 9, { strings: { title: '', basis: '  ' } }),
+    fact('dashboard.escalation', 'add', 10, { strings: { contact: '', reason: ' ', action_label: '' } }),
   ]
-  for (const recipeId of ['photo-triage', 'document-intake', 'approval-desk', 'generic']) {
+  for (const recipeId of ['photo-triage', 'document-intake', 'approval-desk', 'operations-desk', 'generic']) {
     const spec = validate(compileSpec(recipeId, applyFacts(brokenStrings)), `broken-strings ${recipeId}`)
     const photo = spec.intake.components.find((component) => component.id === 'photo_slot')
     if (photo !== undefined) {
       assert.ok(photo.label.length >= 1, `${recipeId}: photo label placeholder missing`)
-      assert.ok(photo.instructions.trim().length >= 1, `${recipeId}: photo instructions placeholder missing`)
+      assert.ok(photo.capture_hint.trim().length >= 1, `${recipeId}: photo capture_hint placeholder missing`)
+    }
+    const files = spec.intake.components.find((component) => component.id === 'documents')
+    if (files !== undefined) {
+      assert.ok(files.label.length >= 1, `${recipeId}: file upload label placeholder missing`)
+      assert.ok(files.instructions.trim().length >= 1, `${recipeId}: file upload instructions placeholder missing`)
     }
     for (const judge of spec.judges) {
       assert.ok(judge.question.trim().length >= 1, `${recipeId}: judge ${judge.id} question empty`)
@@ -271,6 +333,15 @@ const duplicateIds = (spec) => {
     for (const panel of spec.dashboard.panels) {
       if (panel.type === 'analysis') assert.ok(panel.title.trim().length >= 1, `${recipeId}: analysis title empty`)
       if (panel.type === 'confidence_meter') assert.ok(panel.label.trim().length >= 1, `${recipeId}: meter label empty`)
+      if (panel.type === 'quote_panel') {
+        assert.ok(panel.title.trim().length >= 1, `${recipeId}: quote title empty`)
+        assert.ok(panel.basis.trim().length >= 1, `${recipeId}: quote basis empty`)
+      }
+      if (panel.type === 'escalation_card') {
+        assert.ok(panel.contact.trim().length >= 1, `${recipeId}: escalation contact empty`)
+        assert.ok(panel.reason.trim().length >= 1, `${recipeId}: escalation reason empty`)
+        assert.ok(panel.action_label.trim().length >= 1, `${recipeId}: escalation action empty`)
+      }
     }
     assert.ok(spec.description.trim().length >= 1, `${recipeId}: description empty`)
   }

@@ -21,8 +21,8 @@ import { handleOptions } from '../_shared/cors.ts'
 import { readSession } from '../_shared/jwt.ts'
 import { restInsert, restSelect } from '../_shared/rest.ts'
 import { glmChat, type GlmMessage } from '../_shared/glm.ts'
+import { extractSpecJson, validateSpec } from '../_shared/spec-validate.ts'
 
-import { safeParseWorkflowSpec } from '../../../src/engine/schema.ts'
 import type { WorkflowSpec } from '../../../src/engine/types.ts'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -34,58 +34,6 @@ interface MessageRow {
   role: string
   content: string
   created_at: string
-}
-
-/** Extract the last JSON object emitted in assistant content (fenced or bare). */
-export function extractSpecJson(content: string): string | null {
-  const fenced = [...content.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)]
-  for (let index = fenced.length - 1; index >= 0; index--) {
-    const candidate = fenced[index]?.[1]?.trim()
-    if (candidate && candidate.startsWith('{')) return candidate
-  }
-  // Bare object: scan for a balanced {...} (string-aware).
-  const start = content.lastIndexOf('{')
-  if (start === -1) return null
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let index = start; index < content.length; index++) {
-    const char = content[index]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (char === '\\') escaped = true
-      else if (char === '"') inString = false
-      continue
-    }
-    if (char === '"') inString = true
-    else if (char === '{') depth++
-    else if (char === '}') {
-      depth--
-      if (depth === 0) return content.slice(start, index + 1)
-    }
-  }
-  return null
-}
-
-function formatZodError(error: { issues: { path: PropertyKey[]; message: string }[] }): string {
-  return error.issues
-    .slice(0, 4)
-    .map((issue) => `${issue.path.map(String).join('.') || '(root)'}: ${issue.message}`)
-    .join('; ')
-}
-
-/** Validate a spec JSON string against the frozen Zod schema. */
-export function validateSpec(json: string): { ok: true; spec: WorkflowSpec } | { ok: false; error: string } {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(json)
-  } catch (error) {
-    return { ok: false, error: `The spec block is not valid JSON — ${(error as Error).message}` }
-  }
-  const result = safeParseWorkflowSpec(parsed)
-  return result.success
-    ? { ok: true, spec: result.data }
-    : { ok: false, error: formatZodError(result.error) }
 }
 
 function sseChunk(payload: unknown): Uint8Array {
@@ -129,10 +77,12 @@ Deno.serve(async (request) => {
   }
 
   try {
-    // The workflow identifies the client whose builder chat this is.
-    const workflows = await restSelect<{ id: string; client_id: string; name: string }>('workflows', {
+    // The workflow identifies the client whose builder chat this is. The
+    // stored spec rides along: follow-up turns edit the REAL current spec
+    // instead of regenerating blind from prose history.
+    const workflows = await restSelect<{ id: string; client_id: string; name: string; spec: Record<string, unknown> }>('workflows', {
       id: `eq.${workflowId}`,
-      select: 'id,client_id,name',
+      select: 'id,client_id,name,spec',
       limit: '1',
     })
     const workflow = workflows[0]
@@ -159,14 +109,18 @@ Deno.serve(async (request) => {
       return new Response(JSON.stringify({ error: 'Could not resolve builder session' }), { status: 500 })
     }
 
-    // Persist the user message, then load the conversation so far.
+    // Persist the user message, then load the conversation window.
+    // PostgREST applies `limit` AFTER `order`, so ascending order would
+    // return the OLDEST rows and hide the rep's newest turn entirely —
+    // fetch the newest window descending, then restore chronological order.
     await restInsert('messages', { session_id: builderSessionId, role: 'user', content: message })
-    const history = await restSelect<MessageRow>('messages', {
+    const newestFirst = await restSelect<MessageRow>('messages', {
       session_id: `eq.${builderSessionId}`,
       select: 'id,role,content,created_at',
-      order: 'created_at.asc',
+      order: 'created_at.desc,id.desc',
       limit: String(HISTORY_LIMIT),
     })
+    const history = newestFirst.reverse()
 
     // System prompt loads at request time from agent_instructions.
     const instructions = await restSelect<{ content: string }>('agent_instructions', {
@@ -177,8 +131,28 @@ Deno.serve(async (request) => {
     const systemPrompt = instructions[0]?.content ??
       'You are the workflow builder for Connective Sandbox. Emit a single WorkflowSpec JSON object when asked.'
 
+    // Context wiring (Phase 3): the model sees who this build is for and the
+    // spec as it currently stands, so "add a field" edits reality rather
+    // than regenerating from memory. A placeholder spec (fresh workflow)
+    // contributes nothing.
+    const storedSpec = workflow.spec
+    const isPlaceholderSpec =
+      storedSpec === null ||
+      typeof storedSpec !== 'object' ||
+      Object.keys(storedSpec).length === 0 ||
+      (typeof (storedSpec as { description?: unknown }).description === 'string' &&
+        ((storedSpec as { description?: string }).description ?? '') === '' &&
+        ((storedSpec as { intake?: { components?: unknown[] } }).intake?.components?.length ?? 0) === 0)
+    const contextBlock = [
+      'CURRENT CONTEXT:',
+      `- Workflow: ${workflow.name}`,
+      `- This workflow's stored spec (edit THIS when the rep asks for changes — re-emit the complete spec with your changes applied): ${
+        isPlaceholderSpec ? 'none yet' : JSON.stringify(storedSpec).slice(0, 6000)
+      }`,
+    ].join('\n')
+
     const conversation: GlmMessage[] = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: `${systemPrompt}\n\n${contextBlock}` },
       ...history
         .filter((row) => row.role === 'user' || row.role === 'assistant')
         .map<GlmMessage>((row) => ({ role: row.role as 'user' | 'assistant', content: row.content })),
